@@ -2,7 +2,7 @@
 //!
 //! Stage debugging tool
 use crate::{
-    args::{get_secret_key, utils::chain_spec_value_parser, NetworkArgs, StageEnum},
+    args::{get_secret_key, utils::chain_spec_value_parser, DatabaseArgs, NetworkArgs, StageEnum},
     dirs::{DataDirPath, MaybePlatformPath},
     prometheus_exporter,
     version::SHORT_VERSION,
@@ -10,10 +10,10 @@ use crate::{
 use clap::Parser;
 use reth_beacon_consensus::BeaconConsensus;
 use reth_config::Config;
+use reth_db::init_db;
 use reth_downloaders::bodies::bodies::BodiesDownloaderBuilder;
 use reth_primitives::ChainSpec;
 use reth_provider::{ProviderFactory, StageCheckpointReader};
-use reth_staged_sync::utils::init::init_db;
 use reth_stages::{
     stages::{
         AccountHashingStage, BodyStage, ExecutionStage, ExecutionStageThresholds,
@@ -92,6 +92,9 @@ pub struct Command {
     #[clap(flatten)]
     network: NetworkArgs,
 
+    #[clap(flatten)]
+    db: DatabaseArgs,
+
     /// Commits the changes in the database. WARNING: potentially destructive.
     ///
     /// Useful when you want to run diagnostics on the database.
@@ -119,7 +122,7 @@ impl Command {
         let db_path = data_dir.db_path();
 
         info!(target: "reth::cli", path = ?db_path, "Opening database");
-        let db = Arc::new(init_db(db_path)?);
+        let db = Arc::new(init_db(db_path, self.db.log_level)?);
         info!(target: "reth::cli", "Database opened");
 
         let factory = ProviderFactory::new(&db, self.chain.clone());
@@ -127,7 +130,12 @@ impl Command {
 
         if let Some(listen_addr) = self.metrics {
             info!(target: "reth::cli", "Starting metrics endpoint at {}", listen_addr);
-            prometheus_exporter::initialize_with_db_metrics(listen_addr, Arc::clone(&db)).await?;
+            prometheus_exporter::initialize(
+                listen_addr,
+                Arc::clone(&db),
+                metrics_process::Collector::default(),
+            )
+            .await?;
         }
 
         let batch_size = self.batch_size.unwrap_or(self.to - self.from + 1);
@@ -171,8 +179,8 @@ impl Command {
                         downloader: BodiesDownloaderBuilder::default()
                             .with_stream_batch_size(batch_size as usize)
                             .with_request_limit(config.stages.bodies.downloader_request_limit)
-                            .with_max_buffered_blocks(
-                                config.stages.bodies.downloader_max_buffered_blocks,
+                            .with_max_buffered_blocks_size_bytes(
+                                config.stages.bodies.downloader_max_buffered_blocks_size_bytes,
                             )
                             .with_concurrent_requests_range(
                                 config.stages.bodies.downloader_min_concurrent_requests..=

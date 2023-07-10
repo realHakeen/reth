@@ -1,7 +1,8 @@
 //! Command for debugging execution.
 use crate::{
-    args::{get_secret_key, utils::genesis_value_parser, NetworkArgs},
+    args::{get_secret_key, utils::genesis_value_parser, DatabaseArgs, NetworkArgs},
     dirs::{DataDirPath, MaybePlatformPath},
+    init::init_genesis,
     node::events,
     runner::CliContext,
     utils::get_single_header,
@@ -10,10 +11,7 @@ use clap::Parser;
 use futures::{stream::select as stream_select, StreamExt};
 use reth_beacon_consensus::BeaconConsensus;
 use reth_config::Config;
-use reth_db::{
-    database::Database,
-    mdbx::{Env, WriteMap},
-};
+use reth_db::{database::Database, init_db, DatabaseEnv};
 use reth_discv4::DEFAULT_DISCOVERY_PORT;
 use reth_downloaders::{
     bodies::bodies::BodiesDownloaderBuilder,
@@ -25,9 +23,8 @@ use reth_interfaces::{
 };
 use reth_network::NetworkHandle;
 use reth_network_api::NetworkInfo;
-use reth_primitives::{stage::StageId, BlockHashOrNumber, BlockNumber, ChainSpec, H256};
+use reth_primitives::{fs, stage::StageId, BlockHashOrNumber, BlockNumber, ChainSpec, H256};
 use reth_provider::{BlockExecutionWriter, ProviderFactory, StageCheckpointReader};
-use reth_staged_sync::utils::init::{init_db, init_genesis};
 use reth_stages::{
     sets::DefaultStages,
     stages::{
@@ -77,6 +74,9 @@ pub struct Command {
 
     #[clap(flatten)]
     network: NetworkArgs,
+
+    #[clap(flatten)]
+    db: DatabaseArgs,
 
     /// Set the chain tip manually for testing purposes.
     ///
@@ -153,7 +153,7 @@ impl Command {
         &self,
         config: &Config,
         task_executor: TaskExecutor,
-        db: Arc<Env<WriteMap>>,
+        db: Arc<DatabaseEnv>,
         network_secret_path: PathBuf,
         default_peers_path: PathBuf,
     ) -> eyre::Result<NetworkHandle> {
@@ -203,8 +203,8 @@ impl Command {
 
         let data_dir = self.datadir.unwrap_or_chain_default(self.chain.chain);
         let db_path = data_dir.db_path();
-        std::fs::create_dir_all(&db_path)?;
-        let db = Arc::new(init_db(db_path)?);
+        fs::create_dir_all(&db_path)?;
+        let db = Arc::new(init_db(db_path, self.db.log_level)?);
 
         debug!(target: "reth::cli", chain=%self.chain.chain, genesis=?self.chain.genesis_hash(), "Initializing genesis");
         init_genesis(db.clone(), self.chain.clone())?;

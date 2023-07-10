@@ -2,8 +2,8 @@ use crate::{
     change::BundleState,
     traits::{BlockSource, ReceiptProvider},
     AccountReader, BlockHashReader, BlockIdReader, BlockNumReader, BlockReader, BlockReaderIdExt,
-    EvmEnvProvider, HeaderProvider, ReceiptProviderIdExt, StageCheckpointReader, StateProvider,
-    StateProviderBox, StateProviderFactory, StateRootProvider, TransactionsProvider,
+    ChainSpecProvider, EvmEnvProvider, HeaderProvider, ReceiptProviderIdExt, StageCheckpointReader,
+    StateProvider, StateProviderBox, StateProviderFactory, StateRootProvider, TransactionsProvider,
     WithdrawalsProvider,
 };
 use reth_db::models::StoredBlockBodyIndices;
@@ -11,16 +11,22 @@ use reth_interfaces::Result;
 use reth_primitives::{
     stage::{StageCheckpoint, StageId},
     Account, Address, Block, BlockHash, BlockHashOrNumber, BlockId, BlockNumber, Bytecode, Bytes,
-    ChainInfo, Header, Receipt, SealedBlock, SealedHeader, StorageKey, StorageValue,
-    TransactionMeta, TransactionSigned, TxHash, TxNumber, H256, KECCAK_EMPTY, U256,
+    ChainInfo, ChainSpec, Header, Receipt, SealedBlock, SealedHeader, StorageKey, StorageValue,
+    TransactionMeta, TransactionSigned, TxHash, TxNumber, H256, KECCAK_EMPTY, MAINNET, U256,
 };
 use reth_revm_primitives::primitives::{BlockEnv, CfgEnv};
-use std::ops::RangeBounds;
+use std::{ops::RangeBounds, sync::Arc};
 
 /// Supports various api interfaces for testing purposes.
 #[derive(Debug, Clone, Default, Copy)]
 #[non_exhaustive]
 pub struct NoopProvider;
+
+impl ChainSpecProvider for NoopProvider {
+    fn chain_spec(&self) -> Arc<ChainSpec> {
+        MAINNET.clone()
+    }
+}
 
 /// Noop implementation for testing purposes
 impl BlockHashReader for NoopProvider {

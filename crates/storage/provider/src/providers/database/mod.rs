@@ -1,10 +1,11 @@
 use crate::{
     providers::state::{historical::HistoricalStateProvider, latest::LatestStateProvider},
     traits::{BlockSource, ReceiptProvider},
-    BlockHashReader, BlockNumReader, BlockReader, EvmEnvProvider, HeaderProvider, ProviderError,
-    StageCheckpointReader, StateProviderBox, TransactionsProvider, WithdrawalsProvider,
+    BlockHashReader, BlockNumReader, BlockReader, ChainSpecProvider, EvmEnvProvider,
+    HeaderProvider, ProviderError, StageCheckpointReader, StateProviderBox, TransactionsProvider,
+    WithdrawalsProvider,
 };
-use reth_db::{database::Database, models::StoredBlockBodyIndices};
+use reth_db::{database::Database, init_db, models::StoredBlockBodyIndices, DatabaseEnv};
 use reth_interfaces::Result;
 use reth_primitives::{
     stage::{StageCheckpoint, StageId},
@@ -18,6 +19,7 @@ use tracing::trace;
 
 mod provider;
 pub use provider::{DatabaseProvider, DatabaseProviderRO, DatabaseProviderRW};
+use reth_interfaces::db::LogLevel;
 
 /// A common provider that fetches data from a database.
 ///
@@ -51,6 +53,22 @@ impl<DB> ProviderFactory<DB> {
     /// create new database provider
     pub fn new(db: DB, chain_spec: Arc<ChainSpec>) -> Self {
         Self { db, chain_spec }
+    }
+}
+
+impl<DB: Database> ProviderFactory<DB> {
+    /// create new database provider by passing a path. [`ProviderFactory`] will own the database
+    /// instance.
+    pub fn new_with_database_path<P: AsRef<std::path::Path>>(
+        path: P,
+        chain_spec: Arc<ChainSpec>,
+        log_level: Option<LogLevel>,
+    ) -> Result<ProviderFactory<DatabaseEnv>> {
+        Ok(ProviderFactory::<DatabaseEnv> {
+            db: init_db(path, log_level)
+                .map_err(|e| reth_interfaces::Error::Custom(e.to_string()))?,
+            chain_spec,
+        })
     }
 }
 
@@ -329,18 +347,30 @@ impl<DB: Database> EvmEnvProvider for ProviderFactory<DB> {
     }
 }
 
+impl<DB> ChainSpecProvider for ProviderFactory<DB>
+where
+    DB: Send + Sync,
+{
+    fn chain_spec(&self) -> Arc<ChainSpec> {
+        self.chain_spec.clone()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::ProviderFactory;
     use crate::{BlockHashReader, BlockNumReader};
-    use reth_db::mdbx::{test_utils::create_test_db, EnvKind, WriteMap};
+    use reth_db::{
+        test_utils::{create_test_rw_db, ERROR_TEMPDIR},
+        DatabaseEnv,
+    };
     use reth_primitives::{ChainSpecBuilder, H256};
     use std::sync::Arc;
 
     #[test]
     fn common_history_provider() {
         let chain_spec = ChainSpecBuilder::mainnet().build();
-        let db = create_test_db::<WriteMap>(EnvKind::RW);
+        let db = create_test_rw_db();
         let provider = ProviderFactory::new(db, Arc::new(chain_spec));
         let _ = provider.latest();
     }
@@ -348,7 +378,7 @@ mod tests {
     #[test]
     fn default_chain_info() {
         let chain_spec = ChainSpecBuilder::mainnet().build();
-        let db = create_test_db::<WriteMap>(EnvKind::RW);
+        let db = create_test_rw_db();
         let factory = ProviderFactory::new(db, Arc::new(chain_spec));
         let provider = factory.provider().unwrap();
 
@@ -360,8 +390,25 @@ mod tests {
     #[test]
     fn provider_flow() {
         let chain_spec = ChainSpecBuilder::mainnet().build();
-        let db = create_test_db::<WriteMap>(EnvKind::RW);
+        let db = create_test_rw_db();
         let factory = ProviderFactory::new(db, Arc::new(chain_spec));
+        let provider = factory.provider().unwrap();
+        provider.block_hash(0).unwrap();
+        let provider_rw = factory.provider_rw().unwrap();
+        provider_rw.block_hash(0).unwrap();
+        provider.block_hash(0).unwrap();
+    }
+
+    #[test]
+    fn provider_factory_with_database_path() {
+        let chain_spec = ChainSpecBuilder::mainnet().build();
+        let factory = ProviderFactory::<DatabaseEnv>::new_with_database_path(
+            tempfile::TempDir::new().expect(ERROR_TEMPDIR).into_path(),
+            Arc::new(chain_spec),
+            None,
+        )
+        .unwrap();
+
         let provider = factory.provider().unwrap();
         provider.block_hash(0).unwrap();
         let provider_rw = factory.provider_rw().unwrap();

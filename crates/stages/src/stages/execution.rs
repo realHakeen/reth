@@ -1,4 +1,7 @@
-use crate::{ExecInput, ExecOutput, Stage, StageError, UnwindInput, UnwindOutput};
+use crate::{
+    ExecInput, ExecOutput, MetricEvent, MetricEventsSender, Stage, StageError, UnwindInput,
+    UnwindOutput,
+};
 use reth_db::{
     cursor::{DbCursorRO, DbCursorRW, DbDupCursorRO},
     database::Database,
@@ -7,12 +10,7 @@ use reth_db::{
     transaction::{DbTx, DbTxMut},
 };
 use reth_interfaces::db::DatabaseError;
-use reth_metrics::{
-    metrics::{self, Gauge},
-    Metrics,
-};
 use reth_primitives::{
-    constants::MGAS_TO_GAS,
     stage::{
         CheckpointBlockRange, EntitiesCheckpoint, ExecutionCheckpoint, StageCheckpoint, StageId,
     },
@@ -24,14 +22,6 @@ use reth_provider::{
 };
 use std::{ops::RangeInclusive, time::Instant};
 use tracing::*;
-
-/// Execution stage metrics.
-#[derive(Metrics)]
-#[metrics(scope = "sync.execution")]
-pub struct ExecutionStageMetrics {
-    /// The total amount of gas processed (in millions)
-    mgas_processed_total: Gauge,
-}
 
 /// The execution stage executes all transactions and
 /// update history indexes.
@@ -64,7 +54,7 @@ pub struct ExecutionStageMetrics {
 // false positive, we cannot derive it if !DB: Debug.
 #[allow(missing_debug_implementations)]
 pub struct ExecutionStage<EF: ExecutorFactory> {
-    metrics: ExecutionStageMetrics,
+    metrics_tx: Option<MetricEventsSender>,
     /// The stage's internal executor
     executor_factory: EF,
     /// The commit thresholds of the execution stage.
@@ -74,8 +64,7 @@ pub struct ExecutionStage<EF: ExecutorFactory> {
 impl<EF: ExecutorFactory> ExecutionStage<EF> {
     /// Create new execution stage with specified config.
     pub fn new(executor_factory: EF, thresholds: ExecutionStageThresholds) -> Self {
-        trace!(target: "sync::stages::execution", max_blocks= thresholds.max_blocks, " Max blocks");
-        Self { metrics: ExecutionStageMetrics::default(), executor_factory, thresholds }
+        Self { metrics_tx: None, executor_factory, thresholds }
     }
 
     /// Create an execution stage with the provided  executor factory.
@@ -85,9 +74,15 @@ impl<EF: ExecutorFactory> ExecutionStage<EF> {
         Self::new(executor_factory, ExecutionStageThresholds::default())
     }
 
+    /// Set the metric events sender.
+    pub fn with_metrics_tx(mut self, metrics_tx: MetricEventsSender) -> Self {
+        self.metrics_tx = Some(metrics_tx);
+        self
+    }
+
     /// Execute the stage.
     pub fn execute_inner<DB: Database>(
-        &self,
+        &mut self,
         provider: &DatabaseProviderRW<'_, &DB>,
         input: ExecInput,
     ) -> Result<ExecOutput, StageError> {
@@ -127,9 +122,10 @@ impl<EF: ExecutorFactory> ExecutionStage<EF> {
             })?;
 
             // Gas metrics
-            self.metrics
-                .mgas_processed_total
-                .increment(block.header.gas_used as f64 / MGAS_TO_GAS as f64);
+            if let Some(metrics_tx) = &mut self.metrics_tx {
+                let _ =
+                    metrics_tx.send(MetricEvent::ExecutionStageGas { gas: block.header.gas_used });
+            }
 
             stage_progress = block_number;
 
@@ -359,7 +355,10 @@ impl<EF: ExecutorFactory, DB: Database> Stage<DB> for ExecutionStage<EF> {
         }
 
         // Look up the start index for the transaction range
-        let first_tx_num = provider.block_body_indices(*range.start())?.first_tx_num();
+        let first_tx_num = provider
+            .block_body_indices(*range.start())?
+            .ok_or(ProviderError::BlockBodyIndicesNotFound(*range.start()))?
+            .first_tx_num();
 
         let mut stage_checkpoint = input.checkpoint.execution_stage_checkpoint();
 
@@ -423,10 +422,7 @@ mod tests {
     use super::*;
     use crate::test_utils::TestTransaction;
     use assert_matches::assert_matches;
-    use reth_db::{
-        mdbx::{test_utils::create_test_db, EnvKind, WriteMap},
-        models::AccountBeforeTx,
-    };
+    use reth_db::{models::AccountBeforeTx, test_utils::create_test_rw_db};
     use reth_primitives::{
         hex_literal::hex, keccak256, stage::StageUnitCheckpoint, Account, Bytecode,
         ChainSpecBuilder, SealedBlock, StorageEntry, H160, H256, MAINNET, U256,
@@ -447,7 +443,7 @@ mod tests {
 
     #[test]
     fn execution_checkpoint_matches() {
-        let state_db = create_test_db::<WriteMap>(EnvKind::RW);
+        let state_db = create_test_rw_db();
         let factory = ProviderFactory::new(state_db.as_ref(), MAINNET.clone());
         let tx = factory.provider_rw().unwrap();
 
@@ -472,7 +468,7 @@ mod tests {
 
     #[test]
     fn execution_checkpoint_precedes() {
-        let state_db = create_test_db::<WriteMap>(EnvKind::RW);
+        let state_db = create_test_rw_db();
         let factory = ProviderFactory::new(state_db.as_ref(), MAINNET.clone());
         let provider = factory.provider_rw().unwrap();
 
@@ -508,7 +504,7 @@ mod tests {
 
     #[test]
     fn execution_checkpoint_recalculate_full_previous_some() {
-        let state_db = create_test_db::<WriteMap>(EnvKind::RW);
+        let state_db = create_test_rw_db();
         let factory = ProviderFactory::new(state_db.as_ref(), MAINNET.clone());
         let provider = factory.provider_rw().unwrap();
 
@@ -544,7 +540,7 @@ mod tests {
 
     #[test]
     fn execution_checkpoint_recalculate_full_previous_none() {
-        let state_db = create_test_db::<WriteMap>(EnvKind::RW);
+        let state_db = create_test_rw_db();
         let factory = ProviderFactory::new(state_db.as_ref(), MAINNET.clone());
         let provider = factory.provider_rw().unwrap();
 
@@ -574,7 +570,7 @@ mod tests {
     async fn sanity_execution_of_block() {
         // TODO cleanup the setup after https://github.com/paradigmxyz/reth/issues/332
         // is merged as it has similar framework
-        let state_db = create_test_db::<WriteMap>(EnvKind::RW);
+        let state_db = create_test_rw_db();
         let factory = ProviderFactory::new(state_db.as_ref(), MAINNET.clone());
         let provider = factory.provider_rw().unwrap();
         let input = ExecInput {
@@ -684,7 +680,7 @@ mod tests {
         // TODO cleanup the setup after https://github.com/paradigmxyz/reth/issues/332
         // is merged as it has similar framework
 
-        let state_db = create_test_db::<WriteMap>(EnvKind::RW);
+        let state_db = create_test_rw_db();
         let factory = ProviderFactory::new(state_db.as_ref(), MAINNET.clone());
         let provider = factory.provider_rw().unwrap();
         let input = ExecInput {

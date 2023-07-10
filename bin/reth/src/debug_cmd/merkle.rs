@@ -1,16 +1,16 @@
 //! Command for debugging merkle trie calculation.
 use crate::{
-    args::utils::genesis_value_parser,
+    args::{utils::genesis_value_parser, DatabaseArgs},
     dirs::{DataDirPath, MaybePlatformPath},
 };
 use clap::Parser;
-use reth_db::{cursor::DbCursorRO, tables, transaction::DbTx};
+use reth_db::{cursor::DbCursorRO, init_db, tables, transaction::DbTx};
 use reth_primitives::{
+    fs,
     stage::{StageCheckpoint, StageId},
     ChainSpec,
 };
 use reth_provider::{ProviderFactory, StageCheckpointReader};
-use reth_staged_sync::utils::init::init_db;
 use reth_stages::{
     stages::{
         AccountHashingStage, ExecutionStage, ExecutionStageThresholds, MerkleStage,
@@ -50,6 +50,9 @@ pub struct Command {
     )]
     chain: Arc<ChainSpec>,
 
+    #[clap(flatten)]
+    db: DatabaseArgs,
+
     /// The height to finish at
     #[arg(long)]
     to: u64,
@@ -65,9 +68,9 @@ impl Command {
         // add network name to data dir
         let data_dir = self.datadir.unwrap_or_chain_default(self.chain.chain);
         let db_path = data_dir.db_path();
-        std::fs::create_dir_all(&db_path)?;
+        fs::create_dir_all(&db_path)?;
 
-        let db = Arc::new(init_db(db_path)?);
+        let db = Arc::new(init_db(db_path, self.db.log_level)?);
         let factory = ProviderFactory::new(&db, self.chain.clone());
         let provider_rw = factory.provider_rw().map_err(PipelineError::Interface)?;
 

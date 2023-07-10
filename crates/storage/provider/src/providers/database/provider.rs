@@ -484,11 +484,9 @@ impl<'this, TX: DbTxMut<'this> + DbTx<'this>> DatabaseProvider<'this, TX> {
         let mut block_withdrawals = block_withdrawals_iter.next();
 
         let mut blocks = Vec::new();
-        for ((main_block_number, header), (_, header_hash), (_, tx)) in izip!(
-            block_header_iter.into_iter(),
-            block_header_hashes_iter.into_iter(),
-            block_tx_iter.into_iter()
-        ) {
+        for ((main_block_number, header), (_, header_hash), (_, tx)) in
+            izip!(block_header_iter.into_iter(), block_header_hashes_iter, block_tx_iter)
+        {
             let header = header.seal(header_hash);
 
             let (body, senders) = tx.into_iter().map(|tx| tx.to_components()).unzip();
@@ -524,15 +522,6 @@ impl<'this, TX: DbTxMut<'this> + DbTx<'this>> DatabaseProvider<'this, TX> {
         }
 
         Ok(blocks)
-    }
-
-    /// Query the block body by number.
-    pub fn block_body_indices(&self, number: BlockNumber) -> Result<StoredBlockBodyIndices> {
-        let body = self
-            .tx
-            .get::<tables::BlockBodyIndices>(number)?
-            .ok_or(ProviderError::BlockBodyIndicesNotFound(number))?;
-        Ok(body)
     }
 
     /// Unwind table by some number key.
@@ -1278,15 +1267,15 @@ impl<'this, TX: DbTxMut<'this> + DbTx<'this>> HashingWriter for DatabaseProvider
         // storage hashing stage
         {
             let lists = self.changed_storages_with_range(range.clone())?;
-            let storages = self.plainstate_storages(lists.into_iter())?;
-            self.insert_storage_for_hashing(storages.into_iter())?;
+            let storages = self.plainstate_storages(lists)?;
+            self.insert_storage_for_hashing(storages)?;
         }
 
         // account hashing stage
         {
             let lists = self.changed_accounts_with_range(range.clone())?;
-            let accounts = self.basic_accounts(lists.into_iter())?;
-            self.insert_account_for_hashing(accounts.into_iter())?;
+            let accounts = self.basic_accounts(lists)?;
+            self.insert_account_for_hashing(accounts)?;
         }
 
         // merkle tree
@@ -1658,9 +1647,8 @@ impl<'this, TX: DbTxMut<'this> + DbTx<'this>> BlockWriter for DatabaseProvider<'
             block.difficulty
         } else {
             let parent_block_number = block.number - 1;
-            let parent_ttd =
-                self.tx.get::<tables::HeaderTD>(parent_block_number)?.unwrap_or_default();
-            parent_ttd.0 + block.difficulty
+            let parent_ttd = self.header_td_by_number(parent_block_number)?.unwrap_or_default();
+            parent_ttd + block.difficulty
         };
 
         self.tx.put::<tables::HeaderTD>(block.number, ttd.into())?;
@@ -1685,7 +1673,7 @@ impl<'this, TX: DbTxMut<'this> + DbTx<'this>> BlockWriter for DatabaseProvider<'
 
         let senders_len = senders.as_ref().map(|s| s.len());
         let tx_iter = if Some(block.body.len()) == senders_len {
-            block.body.into_iter().zip(senders.unwrap().into_iter()).collect::<Vec<(_, _)>>()
+            block.body.into_iter().zip(senders.unwrap()).collect::<Vec<(_, _)>>()
         } else {
             block
                 .body

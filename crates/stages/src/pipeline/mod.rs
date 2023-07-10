@@ -1,4 +1,7 @@
-use crate::{error::*, ExecInput, ExecOutput, Stage, StageError, UnwindInput};
+use crate::{
+    error::*, ExecInput, ExecOutput, MetricEvent, MetricEventsSender, Stage, StageError,
+    UnwindInput,
+};
 use futures_util::Future;
 use reth_db::database::Database;
 use reth_interfaces::executor::BlockExecutionError;
@@ -17,14 +20,12 @@ mod ctrl;
 mod event;
 mod progress;
 mod set;
-mod sync_metrics;
 
 pub use crate::pipeline::ctrl::ControlFlow;
 pub use builder::*;
 pub use event::*;
 use progress::*;
 pub use set::*;
-use sync_metrics::*;
 
 /// A container for a queued stage.
 pub(crate) type BoxedStage<DB> = Box<dyn Stage<DB>>;
@@ -105,7 +106,7 @@ pub struct Pipeline<DB: Database> {
     progress: PipelineProgress,
     /// A receiver for the current chain tip to sync to.
     tip_tx: Option<watch::Sender<H256>>,
-    metrics: Metrics,
+    metrics_tx: Option<MetricEventsSender>,
 }
 
 impl<DB> Pipeline<DB>
@@ -138,16 +139,17 @@ where
 
     /// Registers progress metrics for each registered stage
     pub fn register_metrics(&mut self) -> Result<(), PipelineError> {
+        let Some(metrics_tx) = &mut self.metrics_tx else { return Ok(()) };
         let factory = ProviderFactory::new(&self.db, self.chain_spec.clone());
         let provider = factory.provider()?;
 
         for stage in &self.stages {
             let stage_id = stage.id();
-            self.metrics.stage_checkpoint(
+            let _ = metrics_tx.send(MetricEvent::StageCheckpoint {
                 stage_id,
-                provider.get_stage_checkpoint(stage_id)?.unwrap_or_default(),
-                None,
-            );
+                checkpoint: provider.get_stage_checkpoint(stage_id)?.unwrap_or_default(),
+                max_block_number: None,
+            });
         }
         Ok(())
     }
@@ -288,12 +290,15 @@ where
                             done = checkpoint.block_number == to,
                             "Stage unwound"
                         );
-                        self.metrics.stage_checkpoint(
-                            stage_id, checkpoint,
-                            // We assume it was set in the previous execute iteration, so it
-                            // doesn't change when we unwind.
-                            None,
-                        );
+                        if let Some(metrics_tx) = &mut self.metrics_tx {
+                            let _ = metrics_tx.send(MetricEvent::StageCheckpoint {
+                                stage_id,
+                                checkpoint,
+                                // We assume it was set in the previous execute iteration, so it
+                                // doesn't change when we unwind.
+                                max_block_number: None,
+                            });
+                        }
                         provider_rw.save_stage_checkpoint(stage_id, checkpoint)?;
 
                         self.listeners
@@ -372,7 +377,13 @@ where
                         %done,
                         "Stage committed progress"
                     );
-                    self.metrics.stage_checkpoint(stage_id, checkpoint, target);
+                    if let Some(metrics_tx) = &mut self.metrics_tx {
+                        let _ = metrics_tx.send(MetricEvent::StageCheckpoint {
+                            stage_id,
+                            checkpoint,
+                            max_block_number: target,
+                        });
+                    }
                     provider_rw.save_stage_checkpoint(stage_id, checkpoint)?;
 
                     self.listeners.notify(PipelineEvent::Ran {
@@ -484,7 +495,7 @@ mod tests {
     use super::*;
     use crate::{test_utils::TestStage, UnwindOutput};
     use assert_matches::assert_matches;
-    use reth_db::mdbx::{self, test_utils, EnvKind};
+    use reth_db::test_utils::create_test_rw_db;
     use reth_interfaces::{
         consensus,
         provider::ProviderError,
@@ -523,7 +534,7 @@ mod tests {
     /// Runs a simple pipeline.
     #[tokio::test]
     async fn run_pipeline() {
-        let db = test_utils::create_test_db::<mdbx::WriteMap>(EnvKind::RW);
+        let db = create_test_rw_db();
 
         let mut pipeline = Pipeline::builder()
             .add_stage(
@@ -578,7 +589,7 @@ mod tests {
     /// Unwinds a simple pipeline.
     #[tokio::test]
     async fn unwind_pipeline() {
-        let db = test_utils::create_test_db::<mdbx::WriteMap>(EnvKind::RW);
+        let db = create_test_rw_db();
 
         let mut pipeline = Pipeline::builder()
             .add_stage(
@@ -694,7 +705,7 @@ mod tests {
     /// Unwinds a pipeline with intermediate progress.
     #[tokio::test]
     async fn unwind_pipeline_with_intermediate_progress() {
-        let db = test_utils::create_test_db::<mdbx::WriteMap>(EnvKind::RW);
+        let db = create_test_rw_db();
 
         let mut pipeline = Pipeline::builder()
             .add_stage(
@@ -781,7 +792,7 @@ mod tests {
     /// - The pipeline finishes
     #[tokio::test]
     async fn run_pipeline_with_unwind() {
-        let db = test_utils::create_test_db::<mdbx::WriteMap>(EnvKind::RW);
+        let db = create_test_rw_db();
 
         let mut pipeline = Pipeline::builder()
             .add_stage(
@@ -875,7 +886,7 @@ mod tests {
     #[tokio::test]
     async fn pipeline_error_handling() {
         // Non-fatal
-        let db = test_utils::create_test_db::<mdbx::WriteMap>(EnvKind::RW);
+        let db = create_test_rw_db();
         let mut pipeline = Pipeline::builder()
             .add_stage(
                 TestStage::new(StageId::Other("NonFatal"))
@@ -888,7 +899,7 @@ mod tests {
         assert_matches!(result, Ok(()));
 
         // Fatal
-        let db = test_utils::create_test_db::<mdbx::WriteMap>(EnvKind::RW);
+        let db = create_test_rw_db();
         let mut pipeline = Pipeline::builder()
             .add_stage(TestStage::new(StageId::Other("Fatal")).add_exec(Err(
                 StageError::DatabaseIntegrity(ProviderError::BlockBodyIndicesNotFound(5)),
