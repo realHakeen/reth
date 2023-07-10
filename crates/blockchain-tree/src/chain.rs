@@ -230,7 +230,7 @@ impl AppendableChain {
         parent_block: &SealedHeader,
         post_state_data_provider: PSDP,
         externals: &TreeExternals<DB, C, EF>,
-    ) -> Result<PostState, Error>
+    ) -> Result<BundleState, Error>
     where
         PSDP: PostStateDataProvider,
         DB: Database,

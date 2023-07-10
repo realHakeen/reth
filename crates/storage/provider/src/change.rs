@@ -122,22 +122,29 @@ impl BundleState {
     ///
     /// The hashed post state.
     fn hash_state_slow(&self) -> HashedPostState {
-        let mut accounts = BTreeMap::default();
-        let mut storages = BTreeMap::default();
+        //let mut storages = BTreeMap::default();
+        let mut hashed_state = HashedPostState::default();
         for (address, account) in self.bundle.state() {
             let hashed_address = keccak256(address);
-            accounts.insert(hashed_address, account.info.as_ref().map(to_reth_acc));
+            if let Some(account) = &account.info {
+                hashed_state.insert_account(hashed_address,to_reth_acc(account))
+            } else {
+                hashed_state.insert_cleared_account(hashed_address);
+            }
 
             // insert storage.
-            let mut hashed_storage = BTreeMap::default();
+            let mut hashed_storage = HashedStorage::new(account.status.was_destroyed());
             for (key, value) in account.storage.iter() {
                 let hashed_key = keccak256(H256(key.to_be_bytes()));
-                hashed_storage.insert(hashed_key, value.present_value);
+                if value.present_value == U256::ZERO {
+                    hashed_storage.insert_zero_valued_slot(hashed_key);
+                } else {
+                    hashed_storage.insert_non_zero_valued_storage(hashed_key, value.present_value);
+                }
             }
-            let wiped = account.status.was_destroyed();
-            storages.insert(hashed_address, HashedStorage { wiped, storage: hashed_storage });
+            hashed_state.insert_hashed_storage(hashed_address, hashed_storage)
         }
-        HashedPostState { accounts, storages }
+        hashed_state
     }
 
     /// Calculate the state root for this [PostState].
@@ -188,11 +195,11 @@ impl BundleState {
     /// Transform block number to the index of block.
     fn block_number_to_index(&self, block_number: BlockNumber) -> Option<usize> {
         if block_number > self.first_block {
-            return None
+            return None;
         }
         let index = block_number - self.first_block;
         if index > self.receipts.len() as u64 {
-            return None
+            return None;
         }
         Some(index as usize)
     }
@@ -269,10 +276,10 @@ impl BundleState {
         let last_block = self.last_block();
         let first_block = self.first_block;
         if block_number >= last_block {
-            return None
+            return None;
         }
         if block_number < first_block {
-            return Some(Self::default())
+            return Some(Self::default());
         }
 
         let num_of_detached_block = block_number - first_block;

@@ -441,8 +441,10 @@ where
                             RewardAction {
                                 author: block.header.beneficiary,
                                 reward_type: RewardType::Uncle,
-                                value: block_reward(base_block_reward, block.ommers.len()) -
-                                    U256::from(base_block_reward),
+                                value: U256::from(
+                                    block_reward(base_block_reward, block.ommers.len())
+                                        - base_block_reward,
+                                ),
                             },
                         ));
                     }

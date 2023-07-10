@@ -82,13 +82,13 @@ impl ExecInput {
         let target_block = self.target();
 
         let start_block_body = provider
-            .block_body_indices(start_block)
+            .block_body_indices(start_block)?
             .ok_or(ProviderError::BlockBodyIndicesNotFound(start_block))?;
         let first_tx_num = start_block_body.first_tx_num();
 
         let target_block_body = provider
-            .block_body_indices(target_block)
-            .ok_or(ProviderError::BlockBodyIndicesNotFound(start_block))?;
+            .block_body_indices(target_block)?
+            .ok_or(ProviderError::BlockBodyIndicesNotFound(target_block))?;
 
         // number of transactions left to execute.
         let all_tx_cnt = target_block_body.next_tx_num() - first_tx_num;
@@ -111,7 +111,7 @@ impl ExecInput {
             // body.
             let end_block_body = provider
                 .block_body_indices(end_block_number)?
-                .ok_or(ProviderError::BlockBodyIndicesNotFound(start_block))?;
+                .ok_or(ProviderError::BlockBodyIndicesNotFound(end_block_number))?;
             (end_block_number, end_block_body.next_tx_num() - first_tx_num)
         };
 
