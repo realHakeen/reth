@@ -102,8 +102,7 @@ impl TracingInspector {
         to: &Address,
         value: U256,
     ) -> bool {
-        // TODO if data.precompiles.contains(to) {
-        if false {
+        if data.precompiles.contains(to) {
             // only if this is _not_ the root call
             return self.is_deep() && value == U256::ZERO
         }
@@ -513,8 +512,7 @@ struct StackStep {
 /// Returns true if this a call to a precompile contract with `depth > 0 && value == 0`.
 #[inline]
 fn is_precompile_call<DB: Database>(data: &EVMData<'_, DB>, to: &Address, value: U256) -> bool {
-    // TODO if data.precompiles.contains(to) {
-    if false {
+    if data.precompiles.contains(to) {
         return data.journaled_state.depth() > 0 && value == U256::ZERO
     }
     false

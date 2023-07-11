@@ -127,7 +127,7 @@ impl BundleState {
         for (address, account) in self.bundle.state() {
             let hashed_address = keccak256(address);
             if let Some(account) = &account.info {
-                hashed_state.insert_account(hashed_address,to_reth_acc(account))
+                hashed_state.insert_account(hashed_address, to_reth_acc(account))
             } else {
                 hashed_state.insert_cleared_account(hashed_address);
             }
@@ -195,11 +195,11 @@ impl BundleState {
     /// Transform block number to the index of block.
     fn block_number_to_index(&self, block_number: BlockNumber) -> Option<usize> {
         if block_number > self.first_block {
-            return None;
+            return None
         }
         let index = block_number - self.first_block;
         if index > self.receipts.len() as u64 {
-            return None;
+            return None
         }
         Some(index as usize)
     }
@@ -276,10 +276,10 @@ impl BundleState {
         let last_block = self.last_block();
         let first_block = self.first_block;
         if block_number >= last_block {
-            return None;
+            return None
         }
         if block_number < first_block {
-            return Some(Self::default());
+            return Some(Self::default())
         }
 
         let num_of_detached_block = block_number - first_block;
