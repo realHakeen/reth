@@ -508,12 +508,3 @@ struct StackStep {
     trace_idx: usize,
     step_idx: usize,
 }
-
-/// Returns true if this a call to a precompile contract with `depth > 0 && value == 0`.
-#[inline]
-fn is_precompile_call<DB: Database>(data: &EVMData<'_, DB>, to: &Address, value: U256) -> bool {
-    if data.precompiles.contains(to) {
-        return data.journaled_state.depth() > 0 && value == U256::ZERO
-    }
-    false
-}

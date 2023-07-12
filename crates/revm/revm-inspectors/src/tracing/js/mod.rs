@@ -89,7 +89,7 @@ impl JsInspector {
             .cloned()
             .ok_or(JsInspectorError::ResultFunctionMissing)?;
         if !result_fn.is_callable() {
-            return Err(JsInspectorError::ResultFunctionMissing)
+            return Err(JsInspectorError::ResultFunctionMissing);
         }
 
         let fault_fn = obj
@@ -98,7 +98,7 @@ impl JsInspector {
             .cloned()
             .ok_or(JsInspectorError::ResultFunctionMissing)?;
         if !result_fn.is_callable() {
-            return Err(JsInspectorError::ResultFunctionMissing)
+            return Err(JsInspectorError::ResultFunctionMissing);
         }
 
         let enter_fn = obj.get("enter", &mut ctx)?.as_object().cloned().filter(|o| o.is_callable());
@@ -110,7 +110,7 @@ impl JsInspector {
 
         if let Some(setup_fn) = obj.get("setup", &mut ctx)?.as_object() {
             if !setup_fn.is_callable() {
-                return Err(JsInspectorError::SetupFunctionNotCallable)
+                return Err(JsInspectorError::SetupFunctionNotCallable);
             }
 
             // call setup()
@@ -275,10 +275,8 @@ where
         _interp: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
     ) -> InstructionResult {
-        // TODO(rakita) new version of revm with exposed precompiles
-        //let precompiles =
-        //    PrecompileList(data.precompiles.addresses().into_iter().map(Into::into).collect());
-        let precompiles = PrecompileList(std::collections::HashSet::new());
+        let precompiles =
+            PrecompileList(data.precompiles.addresses().into_iter().map(Into::into).collect());
         let _ = precompiles.register_callable(&mut self.ctx);
 
         InstructionResult::Continue
@@ -286,7 +284,7 @@ where
 
     fn step(&mut self, interp: &mut Interpreter, data: &mut EVMData<'_, DB>) -> InstructionResult {
         if self.step_fn.is_none() {
-            return InstructionResult::Continue
+            return InstructionResult::Continue;
         }
 
         let db = EvmDb::new(data.journaled_state.state.clone(), self.to_db_service.clone());
@@ -306,7 +304,7 @@ where
         };
 
         if self.try_step(step, db).is_err() {
-            return InstructionResult::Revert
+            return InstructionResult::Revert;
         }
         InstructionResult::Continue
     }
@@ -327,7 +325,7 @@ where
         eval: InstructionResult,
     ) -> InstructionResult {
         if self.step_fn.is_none() {
-            return InstructionResult::Continue
+            return InstructionResult::Continue;
         }
 
         if matches!(eval, return_revert!()) {
@@ -384,7 +382,7 @@ where
                 gas: inputs.gas_limit,
             };
             if let Err(err) = self.try_enter(frame) {
-                return (InstructionResult::Revert, Gas::new(0), err.to_string().into())
+                return (InstructionResult::Revert, Gas::new(0), err.to_string().into());
             }
         }
 
@@ -403,7 +401,7 @@ where
             let frame_result =
                 FrameResult { gas_used: remaining_gas.spend(), output: out.clone(), error: None };
             if let Err(err) = self.try_exit(frame_result) {
-                return (InstructionResult::Revert, Gas::new(0), err.to_string().into())
+                return (InstructionResult::Revert, Gas::new(0), err.to_string().into());
             }
         }
 
@@ -434,7 +432,7 @@ where
             let frame =
                 CallFrame { contract: call.contract.clone(), kind: call.kind, gas: call.gas_limit };
             if let Err(err) = self.try_enter(frame) {
-                return (InstructionResult::Revert, None, Gas::new(0), err.to_string().into())
+                return (InstructionResult::Revert, None, Gas::new(0), err.to_string().into());
             }
         }
 
@@ -454,7 +452,7 @@ where
             let frame_result =
                 FrameResult { gas_used: remaining_gas.spend(), output: out.clone(), error: None };
             if let Err(err) = self.try_exit(frame_result) {
-                return (InstructionResult::Revert, None, Gas::new(0), err.to_string().into())
+                return (InstructionResult::Revert, None, Gas::new(0), err.to_string().into());
             }
         }
 

@@ -1,6 +1,6 @@
 use crate::{
     database::State,
-    new_executor::NewExecutor,
+    processor::EVMProcessor,
     stack::{InspectorStack, InspectorStackConfig},
 };
 use reth_primitives::ChainSpec;
@@ -36,7 +36,7 @@ impl Factory {
 impl ExecutorFactory for Factory {
     fn with_sp<'a, SP: StateProvider + 'a>(&'a self, sp: SP) -> Box<dyn BlockExecutor + 'a> {
         let database_state = State::new(sp);
-        let mut evm = Box::new(NewExecutor::new(self.chain_spec.clone(), database_state));
+        let mut evm = Box::new(EVMProcessor::new(self.chain_spec.clone(), database_state));
         if let Some(ref stack) = self.stack {
             evm.set_stack(stack.clone());
         }

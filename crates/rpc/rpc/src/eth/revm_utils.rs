@@ -521,7 +521,6 @@ pub(crate) fn clone_into_empty_db<DBError: Send + 'static>(
         cache: db.cache.clone(),
         database,
         transition_builder: db.transition_builder.clone(),
-        has_state_clear: db.has_state_clear,
     }
 }
 

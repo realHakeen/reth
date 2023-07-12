@@ -15,7 +15,7 @@ use reth_consensus_common::calc::{base_block_reward, block_reward};
 use reth_interfaces::Error;
 use reth_primitives::{BlockId, BlockNumberOrTag, Bytes, SealedHeader, H256, U256};
 use reth_provider::{
-    BlockReader, ChainSpecProvider, EvmEnvProvider, StateProviderBox, StateProviderFactory,
+    BlockReader, ChainSpecProvider, EvmEnvProvider, StateProviderFactory,
 };
 use reth_revm::{
     database::State,

@@ -13,7 +13,7 @@ use reth_provider::{
     BlockExecutor, BundleState, CanonChainTracker, CanonStateNotificationSender, Chain,
     StateProvider, StateProviderFactory,
 };
-use reth_revm::{database::State, new_executor::NewExecutor};
+use reth_revm::{database::State, processor::EVMProcessor};
 use reth_stages::PipelineEvent;
 use reth_transaction_pool::{TransactionPool, ValidPoolTransaction};
 use std::{
@@ -176,7 +176,7 @@ where
 
                     // execute the new block
                     let state = client.latest().unwrap();
-                    //let mut executor = NewExecutor::new(chain_spec, substate);
+                    //let mut executor = EVMProcessor::new(chain_spec, substate);
 
                     //trace!(target: "consensus::auto", transactions=?&block.body, "executing
                     // transactions");
@@ -322,7 +322,7 @@ fn execute_block<SP: StateProvider>(
 ) -> Result<(u64, BundleState), BlockExecutionError> {
     // execute the new block
     let substate = State::new(state);
-    let mut executor = NewExecutor::new(chain_spec, substate);
+    let mut executor = EVMProcessor::new(chain_spec, substate);
 
     //trace!(target: "consensus::auto", transactions=?&block.body, "executing transactions");
 

@@ -20,7 +20,7 @@ use std::sync::Arc;
 use tracing::debug;
 
 /// Main block executor
-pub struct NewExecutor<'a> {
+pub struct EVMProcessor<'a> {
     /// The configured chain-spec
     pub chain_spec: Arc<ChainSpec>,
     evm: EVM<RevmState<'a, Error>>,
@@ -31,12 +31,12 @@ pub struct NewExecutor<'a> {
     first_block: BlockNumber,
 }
 
-impl<'a> From<Arc<ChainSpec>> for NewExecutor<'a> {
+impl<'a> From<Arc<ChainSpec>> for EVMProcessor<'a> {
     /// Instantiates a new executor from the chainspec. Must call
     /// `with_db` to set the database before executing.
     fn from(chain_spec: Arc<ChainSpec>) -> Self {
         let evm = EVM::new();
-        NewExecutor {
+        EVMProcessor {
             chain_spec,
             evm,
             stack: InspectorStack::new(InspectorStackConfig::default()),
@@ -46,14 +46,14 @@ impl<'a> From<Arc<ChainSpec>> for NewExecutor<'a> {
     }
 }
 
-impl<'a> NewExecutor<'a> {
+impl<'a> EVMProcessor<'a> {
     /// Creates a new executor from the given chain spec and database.
     pub fn new<DB: StateProvider + 'a>(chain_spec: Arc<ChainSpec>, db: State<DB>) -> Self {
         let mut evm = EVM::new();
         let revm_state = RevmState::new_with_transition(Box::new(db));
         evm.database(revm_state);
 
-        NewExecutor {
+        EVMProcessor {
             chain_spec,
             evm,
             stack: InspectorStack::new(InspectorStackConfig::default()),
@@ -94,6 +94,9 @@ impl<'a> NewExecutor<'a> {
 
     /// Initializes the config and block env.
     fn init_env(&mut self, header: &Header, total_difficulty: U256) {
+        if self.chain_spec.fork(Hardfork::SpuriousDragon).active_at_block(header.number) {
+            self.evm.db.as_mut().unwrap().enable_state_clear_eip()
+        }
         fill_cfg_and_block_env(
             &mut self.evm.env.cfg,
             &mut self.evm.env.block,
@@ -192,7 +195,7 @@ impl<'a> NewExecutor<'a> {
         // perf: do not execute empty blocks
         if block.body.is_empty() {
             self.receipts.push(Vec::new());
-            return Ok(0)
+            return Ok(0);
         }
         let senders = self.recover_senders(&block.body, senders)?;
 
@@ -209,7 +212,7 @@ impl<'a> NewExecutor<'a> {
                     transaction_gas_limit: transaction.gas_limit(),
                     block_available_gas,
                 }
-                .into())
+                .into());
             }
             // Execute transaction.
             let ResultAndState { result, state } = self.transact(transaction, sender)?;
@@ -238,7 +241,7 @@ impl<'a> NewExecutor<'a> {
     }
 }
 
-impl<'a> BlockExecutor for NewExecutor<'a> {
+impl<'a> BlockExecutor for EVMProcessor<'a> {
     fn execute(
         &mut self,
         block: &Block,
@@ -253,7 +256,7 @@ impl<'a> BlockExecutor for NewExecutor<'a> {
                 got: cumulative_gas_used,
                 expected: block.gas_used,
             }
-            .into())
+            .into());
         }
 
         self.post_execution_state_change(block, total_difficulty)?;
@@ -291,7 +294,7 @@ impl<'a> BlockExecutor for NewExecutor<'a> {
                     e,
                     self.receipts.last().unwrap()
                 );
-                return Err(e)
+                return Err(e);
             };
         }
 
@@ -318,7 +321,7 @@ pub fn verify_receipt<'a>(
             got: receipts_root,
             expected: expected_receipts_root,
         }
-        .into())
+        .into());
     }
 
     // Create header log bloom.
@@ -328,7 +331,7 @@ pub fn verify_receipt<'a>(
             expected: Box::new(expected_logs_bloom),
             got: Box::new(logs_bloom),
         }
-        .into())
+        .into());
     }
 
     Ok(())

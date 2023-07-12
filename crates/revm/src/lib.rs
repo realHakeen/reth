@@ -21,7 +21,7 @@ pub mod database;
 mod factory;
 
 /// new revm account state executor
-pub mod new_executor;
+pub mod processor;
 
 /// State changes that are not related to transactions.
 pub mod state_change;

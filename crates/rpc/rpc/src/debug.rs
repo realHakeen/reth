@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use jsonrpsee::core::RpcResult;
 use reth_interfaces::Error;
 use reth_primitives::{Account, Block, BlockId, BlockNumberOrTag, Bytes, TransactionSigned, H256};
-use reth_provider::{BlockReaderIdExt, HeaderProvider, StateProviderBox};
+use reth_provider::{BlockReaderIdExt, HeaderProvider};
 use reth_revm::{
     database::State,
     env::tx_env_with_recovered,
@@ -37,7 +37,7 @@ use reth_rpc_types::{
     BlockError, CallRequest, RichBlock,
 };
 use reth_tasks::TaskSpawner;
-use std::{convert::Infallible, future::Future, sync::Arc};
+use std::{future::Future, sync::Arc};
 use tokio::sync::{mpsc, oneshot, AcquireError, OwnedSemaphorePermit};
 use tokio_stream::{wrappers::ReceiverStream, StreamExt};
 
@@ -281,7 +281,7 @@ where
                             .eth_api
                             .inspect_call_at(call, at, overrides, &mut inspector)
                             .await?;
-                        return Ok(FourByteFrame::from(inspector).into())
+                        return Ok(FourByteFrame::from(inspector).into());
                     }
                     GethDebugBuiltInTracerType::CallTracer => {
                         let call_config = tracer_config
@@ -301,7 +301,7 @@ where
 
                         let frame = inspector.into_geth_builder().geth_call_traces(call_config);
 
-                        return Ok(frame.into())
+                        return Ok(frame.into());
                     }
                     GethDebugBuiltInTracerType::PreStateTracer => {
                         Err(EthApiError::Unsupported("pre state tracer currently unsupported."))
@@ -334,7 +334,7 @@ where
                     let result = inspector.json_result(res, &env)?;
                     Ok(GethTrace::JS(result))
                 }
-            }
+            };
         }
 
         // default structlog tracer
@@ -371,7 +371,7 @@ where
                     GethDebugBuiltInTracerType::FourByteTracer => {
                         let mut inspector = FourByteInspector::default();
                         let (res, _) = inspect(db, env, &mut inspector)?;
-                        return Ok((FourByteFrame::from(inspector).into(), res.state))
+                        return Ok((FourByteFrame::from(inspector).into(), res.state));
                     }
                     GethDebugBuiltInTracerType::CallTracer => {
                         let call_config = tracer_config
@@ -387,7 +387,7 @@ where
 
                         let frame = inspector.into_geth_builder().geth_call_traces(call_config);
 
-                        return Ok((frame.into(), res.state))
+                        return Ok((frame.into(), res.state));
                     }
                     GethDebugBuiltInTracerType::PreStateTracer => {
                         Err(EthApiError::Unsupported("prestate tracer is unimplemented yet."))
@@ -413,7 +413,7 @@ where
                     let result = inspector.json_result(res, &env)?;
                     Ok((GethTrace::JS(result), state))
                 }
-            }
+            };
         }
 
         // default structlog tracer
@@ -470,18 +470,13 @@ where
             }
             Err(err) => {
                 let _ = on_ready.send(Err(err));
-                return
+                return;
             }
         };
 
         let mut db = if let Some(db) = db {
-            let RevmState { cache, database, transition_builder, has_state_clear } = db;
-            RevmState {
-                cache,
-                transition_builder,
-                has_state_clear,
-                database: Box::new(State::new(state)),
-            }
+            let RevmState { cache, transition_builder, .. } = db;
+            RevmState { cache, transition_builder, database: Box::new(State::new(state)) }
         } else {
             RevmState::new_with_transition(Box::new(State::new(state)))
         };
