@@ -450,9 +450,9 @@ where
 
 /// Applies a single [AccountOverride] to the [CacheDB].
 fn apply_account_override(
-    account: Address,
-    account_override: AccountOverride,
-    db: &mut RevmState<'_, Error>,
+    _account: Address,
+    _account_override: AccountOverride,
+    _db: &mut RevmState<'_, Error>,
 ) -> EthResult<()>
 where
     EthApiError: From<Error>,

@@ -145,8 +145,6 @@ impl<EF: ExecutorFactory> ExecutionStage<EF> {
         }
         let state = executor.take_output_state();
 
-        //trace!(target: "sync::stages::execution", ?state, "State output");
-
         let start = Instant::now();
         // write output
         state.write_to_db(provider.tx_ref(), false)?;

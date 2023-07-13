@@ -90,7 +90,6 @@ impl<DB: Database> Stage<DB> for TransactionLookupStage {
                 }
             });
         }
-        println!("transaction_count: {}", transaction_count);
         let mut tx_list = Vec::with_capacity(transaction_count);
 
         // Iterate over channels and append the tx hashes to be sorted out later

@@ -17,7 +17,7 @@ use reth_primitives::{
 use reth_provider::{change::BundleState, BlockExecutor, StateProvider};
 use revm::{primitives::ResultAndState, DatabaseCommit, State as RevmState, EVM};
 use std::sync::Arc;
-use tracing::debug;
+use tracing::{debug, trace};
 
 /// Main block executor
 pub struct EVMProcessor<'a> {
@@ -50,7 +50,8 @@ impl<'a> EVMProcessor<'a> {
     /// Creates a new executor from the given chain spec and database.
     pub fn new<DB: StateProvider + 'a>(chain_spec: Arc<ChainSpec>, db: State<DB>) -> Self {
         let mut evm = EVM::new();
-        let revm_state = RevmState::new_with_transition(Box::new(db));
+        let mut revm_state = RevmState::new_with_transition(Box::new(db));
+        revm_state.set_state_clear_flag(false);
         evm.database(revm_state);
 
         EVMProcessor {
@@ -94,9 +95,11 @@ impl<'a> EVMProcessor<'a> {
 
     /// Initializes the config and block env.
     fn init_env(&mut self, header: &Header, total_difficulty: U256) {
-        if self.chain_spec.fork(Hardfork::SpuriousDragon).active_at_block(header.number) {
-            self.evm.db.as_mut().unwrap().enable_state_clear_eip()
-        }
+        //set state clear flag
+        self.evm.db.as_mut().unwrap().set_state_clear_flag(
+            self.chain_spec.fork(Hardfork::SpuriousDragon).active_at_block(header.number),
+        );
+
         fill_cfg_and_block_env(
             &mut self.evm.env.cfg,
             &mut self.evm.env.block,
@@ -195,7 +198,7 @@ impl<'a> EVMProcessor<'a> {
         // perf: do not execute empty blocks
         if block.body.is_empty() {
             self.receipts.push(Vec::new());
-            return Ok(0);
+            return Ok(0)
         }
         let senders = self.recover_senders(&block.body, senders)?;
 
@@ -212,11 +215,16 @@ impl<'a> EVMProcessor<'a> {
                     transaction_gas_limit: transaction.gas_limit(),
                     block_available_gas,
                 }
-                .into());
+                .into())
             }
             // Execute transaction.
             let ResultAndState { result, state } = self.transact(transaction, sender)?;
 
+            trace!(
+                target: "evm",
+                ?transaction, ?result, ?state,
+                "Executed transaction"
+            );
             //println!("\nRESULT: {result:?}\nSTATE:{state:?}");
             // commit changes to database.
             self.db().commit(state);
@@ -256,7 +264,7 @@ impl<'a> BlockExecutor for EVMProcessor<'a> {
                 got: cumulative_gas_used,
                 expected: block.gas_used,
             }
-            .into());
+            .into())
         }
 
         self.post_execution_state_change(block, total_difficulty)?;
@@ -294,7 +302,7 @@ impl<'a> BlockExecutor for EVMProcessor<'a> {
                     e,
                     self.receipts.last().unwrap()
                 );
-                return Err(e);
+                return Err(e)
             };
         }
 
@@ -321,7 +329,7 @@ pub fn verify_receipt<'a>(
             got: receipts_root,
             expected: expected_receipts_root,
         }
-        .into());
+        .into())
     }
 
     // Create header log bloom.
@@ -331,7 +339,7 @@ pub fn verify_receipt<'a>(
             expected: Box::new(expected_logs_bloom),
             got: Box::new(logs_bloom),
         }
-        .into());
+        .into())
     }
 
     Ok(())
