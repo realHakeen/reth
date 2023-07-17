@@ -15,7 +15,10 @@ use reth_primitives::{
     TransactionSigned, H256, U256,
 };
 use reth_provider::{change::BundleState, BlockExecutor, StateProvider};
-use revm::{primitives::ResultAndState, DatabaseCommit, State as RevmState, EVM};
+use revm::{
+    primitives::ResultAndState, DatabaseCommit, State as RevmState,
+    StateBuilder as RevmStateBuilder, EVM,
+};
 use std::sync::Arc;
 use tracing::{debug, trace};
 
@@ -50,8 +53,9 @@ impl<'a> EVMProcessor<'a> {
     /// Creates a new executor from the given chain spec and database.
     pub fn new<DB: StateProvider + 'a>(chain_spec: Arc<ChainSpec>, db: State<DB>) -> Self {
         let mut evm = EVM::new();
-        let mut revm_state = RevmState::new_with_transition(Box::new(db));
-        revm_state.set_state_clear_flag(false);
+        let revm_state =
+            RevmStateBuilder::default().with_database(Box::new(db)).without_state_clear().build();
+
         evm.database(revm_state);
 
         EVMProcessor {

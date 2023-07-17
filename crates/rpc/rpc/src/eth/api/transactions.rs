@@ -23,7 +23,7 @@ use reth_provider::{BlockReaderIdExt, EvmEnvProvider, StateProviderBox, StatePro
 use reth_revm::{
     database::State,
     env::{fill_block_env_with_coinbase, tx_env_with_recovered},
-    revm::State as RevmState,
+    revm::{State as RevmState, StateBuilder as RevmStateBuilder},
     tracing::{TracingInspector, TracingInspectorConfig},
 };
 use reth_rpc_types::{
@@ -501,7 +501,10 @@ where
     {
         let (cfg, block_env, at) = self.evm_env_at(at).await?;
         let state = self.state_at(at)?;
-        let mut db = RevmState::new_without_transitions(Box::new(State::new(state)));
+        let mut db = RevmStateBuilder::default()
+            .with_database(Box::new(State::new(state)))
+            .without_bundle_update()
+            .build();
 
         let env = prepare_call_env(cfg, block_env, request, &mut db, overrides)?;
         f(db, env)
@@ -541,7 +544,10 @@ where
     {
         let (cfg, block_env, at) = self.evm_env_at(at).await?;
         let state = self.state_at(at)?;
-        let mut db = RevmState::new_without_transitions(Box::new(State::new(state)));
+        let mut db = RevmStateBuilder::default()
+            .with_database(Box::new(State::new(state)))
+            .without_bundle_update()
+            .build();
 
         let env = prepare_call_env(cfg, block_env, request, &mut db, overrides)?;
         inspect_and_return_db(db, env, inspector)
@@ -558,7 +564,10 @@ where
         F: FnOnce(TracingInspector, ResultAndState) -> EthResult<R>,
     {
         self.with_state_at_block(at, |state| {
-            let db = RevmState::new_without_transitions(Box::new(State::new(state)));
+            let db = RevmStateBuilder::default()
+                .with_database(Box::new(State::new(state)))
+                .without_bundle_update()
+                .build();
 
             let mut inspector = TracingInspector::new(config);
             let (res, _) = inspect(db, env, &mut inspector)?;
@@ -578,7 +587,10 @@ where
         F: for<'a> FnOnce(TracingInspector, ResultAndState, StateCacheDB<'a>) -> EthResult<R>,
     {
         self.with_state_at_block(at, |state| {
-            let db = RevmState::new_without_transitions(Box::new(State::new(state)));
+            let db = RevmStateBuilder::default()
+                .with_database(Box::new(State::new(state)))
+                .without_bundle_update()
+                .build();
             let mut inspector = TracingInspector::new(config);
             let (res, _, db) = inspect_and_return_db(db, env, &mut inspector)?;
 
@@ -633,7 +645,10 @@ where
         let block_txs = block.body;
 
         self.with_state_at_block(parent_block.into(), |state| {
-            let mut db = RevmState::new_without_transitions(Box::new(State::new(state)));
+            let mut db = RevmStateBuilder::default()
+                .with_database(Box::new(State::new(state)))
+                .without_bundle_update()
+                .build();
 
             // replay all transactions prior to the targeted transaction
             replay_transactions_until::<StateCacheDB<'_>, _, _>(

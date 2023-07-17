@@ -520,7 +520,9 @@ pub(crate) fn clone_into_empty_db<DBError: Send + 'static>(
     RevmState {
         cache: db.cache.clone(),
         database,
-        transition_builder: db.transition_builder.clone(),
+        transition_state: db.transition_state.clone(),
+        bundle_state: db.bundle_state.clone(),
+        use_preloaded_bundle: db.use_preloaded_bundle,
     }
 }
 

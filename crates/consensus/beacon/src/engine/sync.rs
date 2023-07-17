@@ -396,7 +396,7 @@ mod tests {
     use reth_primitives::{
         stage::StageCheckpoint, BlockBody, ChainSpec, ChainSpecBuilder, SealedHeader, MAINNET,
     };
-    use reth_provider::{test_utils::TestExecutorFactory, PostState};
+    use reth_provider::{test_utils::TestExecutorFactory, BundleState};
     use reth_stages::{test_utils::TestStages, ExecOutput, StageError};
     use reth_tasks::TokioTaskExecutor;
     use std::{collections::VecDeque, future::poll_fn, sync::Arc};
@@ -404,7 +404,7 @@ mod tests {
 
     struct TestPipelineBuilder {
         pipeline_exec_outputs: VecDeque<Result<ExecOutput, StageError>>,
-        executor_results: Vec<PostState>,
+        executor_results: Vec<BundleState>,
         max_block: Option<BlockNumber>,
     }
 
@@ -429,7 +429,7 @@ mod tests {
 
         /// Set the executor results to use for the test consensus engine.
         #[allow(dead_code)]
-        fn with_executor_results(mut self, executor_results: Vec<PostState>) -> Self {
+        fn with_executor_results(mut self, executor_results: Vec<BundleState>) -> Self {
             self.executor_results = executor_results;
             self
         }

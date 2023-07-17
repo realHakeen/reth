@@ -32,7 +32,10 @@ use reth_primitives::{
 };
 use reth_provider::{BlockReaderIdExt, BlockSource, BundleState, StateProviderFactory};
 use reth_revm::{
-    database::State, env::tx_env_with_recovered, into_reth_log, revm::State as RevmState,
+    database::State,
+    env::tx_env_with_recovered,
+    into_reth_log,
+    revm::{State as RevmState, StateBuilder as RevmStateBuilder},
     state_change::post_block_withdrawals_balance_increments,
 };
 use reth_rlp::Encodable;
@@ -572,7 +575,7 @@ fn build_payload<Pool, Client>(
 
         let state = State::new(client.state_by_block_hash(parent_block.hash)?);
         let wrapped_state = WrapDatabaseRef(cached_reads.as_db(&state));
-        let mut db = RevmState::new_with_transition(Box::new(wrapped_state));
+        let mut db = RevmStateBuilder::default().with_database(Box::new(wrapped_state)).build();
 
         let mut cumulative_gas_used = 0;
         let block_gas_limit: u64 = initialized_block_env.gas_limit.try_into().unwrap_or(u64::MAX);
@@ -748,7 +751,7 @@ where
     debug!(parent_hash=?parent_block.hash, parent_number=parent_block.number,  "building empty payload");
 
     let state = client.state_by_block_hash(parent_block.hash)?;
-    let mut db = RevmState::new_with_transition(Box::new(State::new(&state)));
+    let mut db = RevmStateBuilder::default().with_database(Box::new(State::new(&state))).build();
 
     let base_fee = initialized_block_env.basefee.to::<u64>();
     let block_number = initialized_block_env.number.to::<u64>();

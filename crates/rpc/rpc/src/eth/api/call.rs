@@ -15,7 +15,11 @@ use ethers_core::utils::get_contract_address;
 use reth_network_api::NetworkInfo;
 use reth_primitives::{AccessList, BlockId, BlockNumberOrTag, Bytes, U256};
 use reth_provider::{BlockReaderIdExt, EvmEnvProvider, StateProvider, StateProviderFactory};
-use reth_revm::{access_list::AccessListInspector, database::State, revm::State as RevmState};
+use reth_revm::{
+    access_list::AccessListInspector,
+    database::State,
+    revm::{State as RevmState, StateBuilder as RevmStateBuilder},
+};
 use reth_rpc_types::CallRequest;
 use reth_transaction_pool::TransactionPool;
 use revm::{
@@ -92,7 +96,10 @@ where
 
         // Configure the evm env
         let mut env = build_call_evm_env(cfg, block, request)?;
-        let mut db = RevmState::new_without_transitions(Box::new(State::new(state)));
+        let mut db = RevmStateBuilder::default()
+            .with_database(Box::new(State::new(state)))
+            .without_bundle_update()
+            .build();
 
         // if the request is a simple transfer we can optimize
         // TODO(rakita) revm state
@@ -252,7 +259,10 @@ where
         // <https://github.com/ethereum/go-ethereum/blob/8990c92aea01ca07801597b00c0d83d4e2d9b811/internal/ethapi/api.go#L1476-L1476>
         env.cfg.disable_base_fee = true;
 
-        let mut db = RevmState::new_without_transitions(Box::new(State::new(state)));
+        let mut db = RevmStateBuilder::default()
+            .with_database(Box::new(State::new(state)))
+            .without_bundle_update()
+            .build();
 
         if request.gas.is_none() && env.tx.gas_price > U256::ZERO {
             // no gas limit was provided in the request, so we need to cap the request's gas limit

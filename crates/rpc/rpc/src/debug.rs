@@ -20,7 +20,7 @@ use reth_revm::{
     env::tx_env_with_recovered,
     revm::{
         primitives::{db::DatabaseCommit, BlockEnv, CfgEnv, Env},
-        State as RevmState,
+        State as RevmState, StateBuilder as RevmStateBuilder,
     },
     tracing::{
         js::{JsDbRequest, JsInspector},
@@ -106,7 +106,10 @@ where
         let this = self.clone();
         self.inner.eth_api.with_state_at_block(at, move |state| {
             let mut results = Vec::with_capacity(transactions.len());
-            let mut db = RevmState::new_without_transitions(Box::new(State::new(state)));
+            let mut db = RevmStateBuilder::default()
+                .with_database(Box::new(State::new(state)))
+                .without_bundle_update()
+                .build();
 
             let mut transactions = transactions.into_iter().peekable();
             while let Some(tx) = transactions.next() {
@@ -224,7 +227,10 @@ where
                 let tx = transaction.into_recovered();
 
                 let provider = Box::new(State::new(state));
-                let mut db = RevmState::new_without_transitions(provider);
+                let mut db = RevmStateBuilder::default()
+                    .with_database(provider)
+                    .without_bundle_update()
+                    .build();
                 // replay all transactions prior to the targeted transaction
                 replay_transactions_until::<RevmState<'_, Error>, _, _>(
                     &mut db,
@@ -315,7 +321,10 @@ where
                     // because JSTracer and all JS types are not Send
                     let (cfg, block_env, at) = self.inner.eth_api.evm_env_at(at).await?;
                     let state = self.inner.eth_api.state_at(at)?;
-                    let mut db = RevmState::new_without_transitions(Box::new(State::new(state)));
+                    let mut db = RevmStateBuilder::default()
+                        .with_database(Box::new(State::new(state)))
+                        .without_bundle_update()
+                        .build();
                     let has_state_overrides = overrides.has_state();
                     let env = prepare_call_env(cfg, block_env, call, &mut db, overrides)?;
 
@@ -474,11 +483,13 @@ where
             }
         };
 
+        let database = Box::new(State::new(state));
+
         let mut db = if let Some(db) = db {
-            let RevmState { cache, transition_builder, .. } = db;
-            RevmState { cache, transition_builder, database: Box::new(State::new(state)) }
+            let RevmState { cache, use_preloaded_bundle, transition_state, bundle_state, .. } = db;
+            RevmState { cache, transition_state, bundle_state, database, use_preloaded_bundle }
         } else {
-            RevmState::new_with_transition(Box::new(State::new(state)))
+            RevmStateBuilder::default().with_database(database).build()
         };
 
         let mut stream = ReceiverStream::new(rx);

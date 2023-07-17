@@ -29,7 +29,11 @@ use reth_rpc_types::{
     BlockError, BlockOverrides, CallRequest, Index, TransactionInfo,
 };
 use reth_tasks::TaskSpawner;
-use revm::{db::State as RevmState, primitives::Env, DatabaseCommit};
+use revm::{
+    db::{State as RevmState, StateBuilder as RevmStateBuilder},
+    primitives::Env,
+    DatabaseCommit,
+};
 use revm_primitives::{ExecutionResult, ResultAndState};
 use std::{collections::HashSet, future::Future, sync::Arc};
 use tokio::sync::{oneshot, AcquireError, OwnedSemaphorePermit};
@@ -194,7 +198,10 @@ where
             this.inner.eth_api.with_state_at_block(at, move |state| {
                 let mut results = Vec::with_capacity(calls.len());
                 let provider = Box::new(State::new(state));
-                let mut revm_state = RevmState::new_without_transitions(provider);
+                let mut revm_state = RevmStateBuilder::default()
+                    .with_database(provider)
+                    .without_bundle_update()
+                    .build();
 
                 let mut calls = calls.into_iter().peekable();
 
@@ -356,7 +363,10 @@ where
                 .eth_api
                 .with_state_at_block(state_at.into(), move |state| {
                     let mut results = Vec::with_capacity(transactions.len());
-                    let mut db = RevmState::new_without_transitions(Box::new(State::new(state)));
+                    let mut db = RevmStateBuilder::default()
+                        .with_database(Box::new(State::new(state)))
+                        .without_bundle_update()
+                        .build();
 
                     let mut transactions = transactions.into_iter().enumerate().peekable();
 
