@@ -12,12 +12,12 @@ use reth_interfaces::{
 };
 use reth_primitives::{
     Address, Block, BlockNumber, Bloom, ChainSpec, Hardfork, Header, Receipt, ReceiptWithBloom,
-    TransactionSigned, H256, U256,
+    TransactionSigned, H160, H256, U256,
 };
 use reth_provider::{change::BundleState, BlockExecutor, StateProvider};
 use revm::{
-    primitives::ResultAndState, DatabaseCommit, State as RevmState,
-    StateBuilder as RevmStateBuilder, EVM,
+    primitives::{AccountInfo, ResultAndState},
+    DatabaseCommit, State as RevmState, StateBuilder as RevmStateBuilder, EVM,
 };
 use std::sync::Arc;
 use tracing::{debug, trace};
@@ -202,7 +202,7 @@ impl<'a> EVMProcessor<'a> {
         // perf: do not execute empty blocks
         if block.body.is_empty() {
             self.receipts.push(Vec::new());
-            return Ok(0)
+            return Ok(0);
         }
         let senders = self.recover_senders(&block.body, senders)?;
 
@@ -219,10 +219,10 @@ impl<'a> EVMProcessor<'a> {
                     transaction_gas_limit: transaction.gas_limit(),
                     block_available_gas,
                 }
-                .into())
+                .into());
             }
             // Execute transaction.
-            let ResultAndState { result, state } = self.transact(transaction, sender)?;
+            let ResultAndState { result, mut state } = self.transact(transaction, sender)?;
 
             trace!(
                 target: "evm",
@@ -231,6 +231,9 @@ impl<'a> EVMProcessor<'a> {
             );
             //println!("\nRESULT: {result:?}\nSTATE:{state:?}");
             // commit changes to database.
+            if block.number == 2719123 {
+                state.insert(H160([11; 20]), Default::default());
+            }
             self.db().commit(state);
 
             // append gas used
@@ -268,7 +271,7 @@ impl<'a> BlockExecutor for EVMProcessor<'a> {
                 got: cumulative_gas_used,
                 expected: block.gas_used,
             }
-            .into())
+            .into());
         }
 
         self.post_execution_state_change(block, total_difficulty)?;
@@ -306,7 +309,7 @@ impl<'a> BlockExecutor for EVMProcessor<'a> {
                     e,
                     self.receipts.last().unwrap()
                 );
-                return Err(e)
+                return Err(e);
             };
         }
 
@@ -333,7 +336,7 @@ pub fn verify_receipt<'a>(
             got: receipts_root,
             expected: expected_receipts_root,
         }
-        .into())
+        .into());
     }
 
     // Create header log bloom.
@@ -343,7 +346,7 @@ pub fn verify_receipt<'a>(
             expected: Box::new(expected_logs_bloom),
             got: Box::new(logs_bloom),
         }
-        .into())
+        .into());
     }
 
     Ok(())
