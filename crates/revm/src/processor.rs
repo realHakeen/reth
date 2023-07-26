@@ -231,9 +231,9 @@ impl<'a> EVMProcessor<'a> {
             );
             //println!("\nRESULT: {result:?}\nSTATE:{state:?}");
             // commit changes to database.
-            if block.number == 2719231 {
-                state.insert(H160([11; 20]), Default::default());
-            }
+            //if block.number == 2719231 {
+            //    state.insert(H160([11; 20]), Default::default());
+            //}
             self.db().commit(state);
 
             // append gas used
