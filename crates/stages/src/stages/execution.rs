@@ -148,7 +148,7 @@ impl<EF: ExecutorFactory> ExecutionStage<EF> {
         let start = Instant::now();
         // write output
         // TODO(rakita) we should revert to omit_changed to true. this is just for a quick check for a bug.
-        state.write_to_db(provider.tx_ref(), true)?;
+        state.write_to_db(provider.tx_ref(), false)?;
 
         info!(target: "sync::stages::execution", took = ?start.elapsed(), "Wrote state");
 
