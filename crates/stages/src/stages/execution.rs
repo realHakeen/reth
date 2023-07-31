@@ -20,7 +20,10 @@ use reth_provider::{
     BlockReader, DatabaseProviderRW, ExecutorFactory, HeaderProvider, LatestStateProviderRef,
     ProviderError,
 };
-use std::{ops::RangeInclusive, time::Instant};
+use std::{
+    ops::RangeInclusive,
+    time::{Duration, Instant},
+};
 use tracing::*;
 
 /// The execution stage executes all transactions and
@@ -102,9 +105,12 @@ impl<EF: ExecutorFactory> ExecutionStage<EF> {
         let mut stage_checkpoint =
             execution_checkpoint(provider, start_block, max_block, input.checkpoint())?;
 
+        let mut fetch_block_duration = Duration::default();
+        let mut execution_duration = Duration::default();
         // Execute block range
         debug!(target: "sync::stages::execution", start = start_block, end = max_block, "Executing range");
         for block_number in start_block..=max_block {
+            let time = Instant::now();
             let td = provider
                 .header_td_by_number(block_number)?
                 .ok_or_else(|| ProviderError::HeaderNotFound(block_number.into()))?;
@@ -112,14 +118,18 @@ impl<EF: ExecutorFactory> ExecutionStage<EF> {
                 .block_with_senders(block_number)?
                 .ok_or_else(|| ProviderError::BlockNotFound(block_number.into()))?;
 
+            fetch_block_duration += time.elapsed();
             // Configure the executor to use the current state.
             trace!(target: "sync::stages::execution", number = block_number, txs = block.body.len(), "Executing block");
 
+            let time = Instant::now();
             // Execute the block
             let (block, senders) = block.into_components();
             executor.execute_and_verify_receipt(&block, td, Some(senders)).map_err(|error| {
                 StageError::ExecutionError { block: block.header.clone().seal_slow(), error }
             })?;
+
+            execution_duration += time.elapsed();
 
             // Gas metrics
             if let Some(metrics_tx) = &mut self.metrics_tx {
@@ -143,14 +153,20 @@ impl<EF: ExecutorFactory> ExecutionStage<EF> {
                 break
             }
         }
+        let time = Instant::now();
         let state = executor.take_output_state();
+        let write_preparation_duration = time.elapsed();
 
-        let start = Instant::now();
+        let time = Instant::now();
         // write output
-        // TODO(rakita) we should revert to omit_changed to true. this is just for a quick check for a bug.
+        // TODO(rakita) we should revert to omit_changed to true. this is just for a quick check for
+        // a bug.
         state.write_to_db(provider.tx_ref(), false)?;
+        let db_write_duration = time.elapsed();
+        info!(target: "sync::stages::execution", block_fetch=?fetch_block_duration, execution=?execution_duration, 
+            write_preperation=?write_preparation_duration, write=?db_write_duration, " Execution duration.");
 
-        info!(target: "sync::stages::execution", took = ?start.elapsed(), "Wrote state");
+        executor.stats().log_info("sync::stages::execution");
 
         let done = stage_progress == max_block;
         Ok(ExecOutput {

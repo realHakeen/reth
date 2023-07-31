@@ -12,14 +12,14 @@ use reth_interfaces::{
 };
 use reth_primitives::{
     Address, Block, BlockNumber, Bloom, ChainSpec, Hardfork, Header, Receipt, ReceiptWithBloom,
-    TransactionSigned, H160, H256, U256,
+    TransactionSigned, H256, U256,
 };
-use reth_provider::{change::BundleState, BlockExecutor, StateProvider};
+use reth_provider::{change::BundleState, BlockExecutor, BlockExecutorStats, StateProvider};
 use revm::{
-    primitives::{AccountInfo, ResultAndState},
-    DatabaseCommit, State as RevmState, StateBuilder as RevmStateBuilder, EVM,
+    primitives::ResultAndState, DatabaseCommit, State as RevmState,
+    StateBuilder as RevmStateBuilder, EVM,
 };
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 use tracing::{debug, trace};
 
 /// Main block executor
@@ -32,6 +32,8 @@ pub struct EVMProcessor<'a> {
     /// First block will be initialized to ZERO
     /// and be set to the block number of first block executed.
     first_block: BlockNumber,
+    /// Execution stats
+    stats: BlockExecutorStats,
 }
 
 impl<'a> From<Arc<ChainSpec>> for EVMProcessor<'a> {
@@ -45,6 +47,7 @@ impl<'a> From<Arc<ChainSpec>> for EVMProcessor<'a> {
             stack: InspectorStack::new(InspectorStackConfig::default()),
             receipts: Vec::new(),
             first_block: 0,
+            stats: BlockExecutorStats::default(),
         }
     }
 }
@@ -64,6 +67,7 @@ impl<'a> EVMProcessor<'a> {
             stack: InspectorStack::new(InspectorStackConfig::default()),
             receipts: Vec::new(),
             first_block: 0,
+            stats: BlockExecutorStats::default(),
         }
     }
 
@@ -78,7 +82,7 @@ impl<'a> EVMProcessor<'a> {
     }
 
     fn recover_senders(
-        &self,
+        &mut self,
         body: &[TransactionSigned],
         senders: Option<Vec<Address>>,
     ) -> Result<Vec<Address>, BlockExecutionError> {
@@ -89,11 +93,15 @@ impl<'a> EVMProcessor<'a> {
                 Err(BlockValidationError::SenderRecoveryError.into())
             }
         } else {
-            body.iter()
+            let time = Instant::now();
+            let ret = body
+                .iter()
                 .map(|tx| {
                     tx.recover_signer().ok_or(BlockValidationError::SenderRecoveryError.into())
                 })
-                .collect()
+                .collect();
+            self.stats.sender_recovery_duration += time.elapsed();
+            ret
         }
     }
 
@@ -202,7 +210,7 @@ impl<'a> EVMProcessor<'a> {
         // perf: do not execute empty blocks
         if block.body.is_empty() {
             self.receipts.push(Vec::new());
-            return Ok(0);
+            return Ok(0)
         }
         let senders = self.recover_senders(&block.body, senders)?;
 
@@ -211,6 +219,7 @@ impl<'a> EVMProcessor<'a> {
         let mut cumulative_gas_used = 0;
         let mut receipts = Vec::with_capacity(block.body.len());
         for (transaction, sender) in block.body.iter().zip(senders.into_iter()) {
+            let time = Instant::now();
             // The sum of the transaction’s gas limit, Tg, and the gas utilised in this block prior,
             // must be no greater than the block’s gasLimit.
             let block_available_gas = block.header.gas_limit - cumulative_gas_used;
@@ -219,22 +228,25 @@ impl<'a> EVMProcessor<'a> {
                     transaction_gas_limit: transaction.gas_limit(),
                     block_available_gas,
                 }
-                .into());
+                .into())
             }
             // Execute transaction.
-            let ResultAndState { result, mut state } = self.transact(transaction, sender)?;
-
+            let ResultAndState { result, state } = self.transact(transaction, sender)?;
             trace!(
                 target: "evm",
                 ?transaction, ?result, ?state,
                 "Executed transaction"
             );
+            self.stats.execution_duration += time.elapsed();
+            let time = Instant::now();
             //println!("\nRESULT: {result:?}\nSTATE:{state:?}");
             // commit changes to database.
             //if block.number == 2719231 {
             //    state.insert(H160([11; 20]), Default::default());
             //}
             self.db().commit(state);
+
+            self.stats.apply_state_duration += time.elapsed();
 
             // append gas used
             cumulative_gas_used += result.gas_used();
@@ -271,12 +283,15 @@ impl<'a> BlockExecutor for EVMProcessor<'a> {
                 got: cumulative_gas_used,
                 expected: block.gas_used,
             }
-            .into());
+            .into())
         }
-
+        let time = Instant::now();
         self.post_execution_state_change(block, total_difficulty)?;
+        self.stats.apply_post_execution_changes_duration += time.elapsed();
 
+        let time = Instant::now();
         self.db().merge_transitions();
+        self.stats.merge_transitions_duration += time.elapsed();
 
         if self.first_block == 0 {
             self.first_block = block.number;
@@ -298,6 +313,7 @@ impl<'a> BlockExecutor for EVMProcessor<'a> {
         // transaction This was replaced with is_success flag.
         // See more about EIP here: https://eips.ethereum.org/EIPS/eip-658
         if self.chain_spec.fork(Hardfork::Byzantium).active_at_block(block.header.number) {
+            let time = Instant::now();
             if let Err(e) = verify_receipt(
                 block.header.receipts_root,
                 block.header.logs_bloom,
@@ -309,8 +325,9 @@ impl<'a> BlockExecutor for EVMProcessor<'a> {
                     e,
                     self.receipts.last().unwrap()
                 );
-                return Err(e);
+                return Err(e)
             };
+            self.stats.receipt_root_duration += time.elapsed();
         }
 
         Ok(())
@@ -319,6 +336,10 @@ impl<'a> BlockExecutor for EVMProcessor<'a> {
     fn take_output_state(&mut self) -> BundleState {
         let receipts = std::mem::take(&mut self.receipts);
         BundleState::new(self.evm.db().unwrap().take_bundle(), receipts, self.first_block)
+    }
+
+    fn stats(&self) -> BlockExecutorStats {
+        self.stats.clone()
     }
 }
 
@@ -336,7 +357,7 @@ pub fn verify_receipt<'a>(
             got: receipts_root,
             expected: expected_receipts_root,
         }
-        .into());
+        .into())
     }
 
     // Create header log bloom.
@@ -346,7 +367,7 @@ pub fn verify_receipt<'a>(
             expected: Box::new(expected_logs_bloom),
             got: Box::new(logs_bloom),
         }
-        .into());
+        .into())
     }
 
     Ok(())
