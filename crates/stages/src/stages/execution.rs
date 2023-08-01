@@ -159,14 +159,12 @@ impl<EF: ExecutorFactory> ExecutionStage<EF> {
 
         let time = Instant::now();
         // write output
-        // TODO(rakita) we should revert to omit_changed to true. this is just for a quick check for
-        // a bug.
         state.write_to_db(provider.tx_ref(), false)?;
         let db_write_duration = time.elapsed();
         info!(target: "sync::stages::execution", block_fetch=?fetch_block_duration, execution=?execution_duration, 
             write_preperation=?write_preparation_duration, write=?db_write_duration, " Execution duration.");
 
-        executor.stats().log_info("sync::stages::execution");
+        executor.stats().log_info();
 
         let done = stage_progress == max_block;
         Ok(ExecOutput {

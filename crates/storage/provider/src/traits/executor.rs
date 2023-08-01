@@ -40,8 +40,8 @@ pub struct BlockExecutorStats {
 
 impl BlockExecutorStats {
     /// Log duration to info level log.
-    pub fn log_info(&self, target: &str) {
-        info!(target,
+    pub fn log_info(&self) {
+        info!(target: "evm",
             evm_transact = ?self.execution_duration,
             apply_state = ?self.apply_state_duration,
             apply_post_state = ?self.apply_post_execution_changes_duration,
