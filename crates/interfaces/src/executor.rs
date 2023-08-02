@@ -1,4 +1,4 @@
-use reth_primitives::{BlockHash, BlockNumHash, Bloom, H256};
+use reth_primitives::{BlockHash, BlockNumHash, Bloom, Receipt, H256};
 use thiserror::Error;
 
 /// Transaction validation errors
@@ -20,8 +20,8 @@ pub enum BlockValidationError {
         transaction_gas_limit: u64,
         block_available_gas: u64,
     },
-    #[error("Block gas used {got} is different from expected gas used {expected}.")]
-    BlockGasUsed { got: u64, expected: u64 },
+    #[error("Block gas used {got} is different from expected gas used {expected}.\nReceipts: {receipts:?}\n")]
+    BlockGasUsed { got: u64, expected: u64, receipts: Vec<Receipt> },
     #[error("Block {hash:?} is pre merge")]
     BlockPreMerge { hash: H256 },
     #[error("Missing total difficulty")]

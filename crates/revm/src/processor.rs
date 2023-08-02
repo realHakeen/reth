@@ -239,11 +239,7 @@ impl<'a> EVMProcessor<'a> {
             );
             self.stats.execution_duration += time.elapsed();
             let time = Instant::now();
-            //println!("\nRESULT: {result:?}\nSTATE:{state:?}");
-            // commit changes to database.
-            //if block.number == 2719231 {
-            //    state.insert(H160([11; 20]), Default::default());
-            //}
+
             self.db().commit(state);
 
             self.stats.apply_state_duration += time.elapsed();
@@ -282,6 +278,7 @@ impl<'a> BlockExecutor for EVMProcessor<'a> {
             return Err(BlockValidationError::BlockGasUsed {
                 got: cumulative_gas_used,
                 expected: block.gas_used,
+                receipts: self.receipts.last().cloned().unwrap_or_default(),
             }
             .into())
         }
