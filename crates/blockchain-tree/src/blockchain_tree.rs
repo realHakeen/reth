@@ -950,6 +950,8 @@ impl<DB: Database, C: Consensus, EF: ExecutorFactory> BlockchainTree<DB, C, EF> 
             target: "blockchain_tree",
             "Committing new canonical chain: {}", DisplayBlocksChain(new_canon_chain.blocks())
         );
+
+        println!("committing canonical chain {new_canon_chain:?}");
         // if joins to the tip;
         if new_canon_chain.fork_block_hash() == old_tip.hash {
             chain_notification =
@@ -1099,22 +1101,24 @@ impl<DB: Database, C: Consensus, EF: ExecutorFactory> BlockchainTree<DB, C, EF> 
     }
 }
 
-/* TODO tests
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::block_buffer::BufferedBlocks;
     use assert_matches::assert_matches;
     use linked_hash_set::LinkedHashSet;
-    use reth_db::{test_utils::create_test_rw_db, transaction::DbTxMut, DatabaseEnv};
+    use reth_db::{
+        mdbx::{Env, WriteMap},
+        test_utils::create_test_rw_db,
+        transaction::DbTxMut,
+    };
     use reth_interfaces::test_utils::TestConsensus;
     use reth_primitives::{
         proofs::EMPTY_ROOT, stage::StageCheckpoint, ChainSpecBuilder, H256, MAINNET,
     };
     use reth_provider::{
-        post_state::PostState,
         test_utils::{blocks::BlockChainTestData, TestExecutorFactory},
-        BlockWriter, ProviderFactory,
+        BlockWriter, BundleState, ProviderFactory,
     };
     use std::{collections::HashSet, sync::Arc};
 
@@ -1253,10 +1257,10 @@ mod tests {
             BlockchainTree::new(externals, sender, config).expect("failed to create tree");
 
         // genesis block 10 is already canonical
-        assert!(tree.make_canonical(&H256::zero()).is_ok());
+        tree.make_canonical(&H256::zero()).unwrap();
 
         // make sure is_block_hash_canonical returns true for genesis block
-        assert!(tree.is_block_hash_canonical(&H256::zero()).unwrap());
+        tree.is_block_hash_canonical(&H256::zero()).unwrap();
 
         // make genesis block 10 as finalized
         tree.finalize_block(10);
@@ -1466,8 +1470,8 @@ mod tests {
         assert!(tree.is_block_hash_canonical(&block1a.hash).unwrap());
 
         // make b2 canonical
-        assert!(tree.make_canonical(&block2.hash()).is_ok());
-
+        tree.make_canonical(&block2.hash()).unwrap();
+        panic!("end");
         // Trie state:
         // b2   b2a (side chain)
         // |   /
@@ -1536,7 +1540,7 @@ mod tests {
             .assert(&tree);
 
         // commit b2a
-        assert!(tree.make_canonical(&block2.hash).is_ok());
+        tree.make_canonical(&block2.hash).unwrap();
 
         // Trie state:
         // b2   b2a (side chain)
@@ -1598,5 +1602,3 @@ mod tests {
             .assert(&tree);
     }
 }
-
- */

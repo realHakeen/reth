@@ -448,7 +448,7 @@ where
     Ok(())
 }
 
-/// Applies a single [AccountOverride] to the [CacheDB].
+/// Applies a single [AccountOverride] to the [CacheState].
 fn apply_account_override(
     _account: Address,
     _account_override: AccountOverride,

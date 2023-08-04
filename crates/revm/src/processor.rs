@@ -278,7 +278,19 @@ impl<'a> BlockExecutor for EVMProcessor<'a> {
             return Err(BlockValidationError::BlockGasUsed {
                 got: cumulative_gas_used,
                 expected: block.gas_used,
-                receipts: self.receipts.last().cloned().unwrap_or_default(),
+                receipts: self
+                    .receipts
+                    .last()
+                    .and_then(|block_r| {
+                        Some(
+                            block_r
+                                .iter()
+                                .enumerate()
+                                .map(|(id, tx_r)| (id as u64, tx_r.cumulative_gas_used))
+                                .collect(),
+                        )
+                    })
+                    .unwrap_or_default(),
             }
             .into())
         }
@@ -370,11 +382,11 @@ pub fn verify_receipt<'a>(
     Ok(())
 }
 
-/* TODO(rakita) tests
+//TODO(rakita) tests
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::database::State;
+    use crate::{database::State, state_change};
     use once_cell::sync::Lazy;
     use reth_consensus_common::calc;
     use reth_primitives::{
@@ -382,21 +394,28 @@ mod tests {
         Bytecode, Bytes, ChainSpecBuilder, ForkCondition, StorageKey, H256, MAINNET, U256,
     };
     use reth_provider::{
-        post_state::{AccountChanges, Storage, StorageTransition, StorageWipe},
-        AccountReader, BlockHashReader, StateProvider, StateRootProvider,
+        //post_state::{AccountChanges, Storage, StorageTransition, StorageWipe},
+        AccountReader,
+        BlockHashReader,
+        StateProvider,
+        StateRootProvider,
     };
     use reth_rlp::Decodable;
-    use std::{collections::HashMap, str::FromStr};
+    use std::{
+        collections::{hash_map, HashMap},
+        str::FromStr,
+    };
 
-    static DEFAULT_REVM_ACCOUNT: Lazy<RevmAccount> = Lazy::new(|| RevmAccount {
-        info: AccountInfo::default(),
-        storage: hash_map::HashMap::default(),
-        is_destroyed: false,
-        is_touched: false,
-        storage_cleared: false,
-        is_not_existing: false,
-    });
-
+    /*
+        static DEFAULT_REVM_ACCOUNT: Lazy<RevmAccount> = Lazy::new(|| RevmAccount {
+            info: AccountInfo::default(),
+            storage: hash_map::HashMap::default(),
+            is_destroyed: false,
+            is_touched: false,
+            storage_cleared: false,
+            is_not_existing: false,
+        });
+    */
     #[derive(Debug, Default, Clone, Eq, PartialEq)]
     struct StateProviderTest {
         accounts: HashMap<Address, (HashMap<StorageKey, U256>, Account)>,
@@ -449,7 +468,7 @@ mod tests {
     }
 
     impl StateRootProvider for StateProviderTest {
-        fn state_root(&self, _post_state: PostState) -> reth_interfaces::Result<H256> {
+        fn state_root(&self, _post_state: BundleState) -> reth_interfaces::Result<H256> {
             todo!()
         }
     }
@@ -479,6 +498,7 @@ mod tests {
         }
     }
 
+    /* SANITY Execution
     #[test]
     fn sanity_execution() {
         // Got rlp block from: src/GeneralStateTestsFiller/stChainId/chainIdGasCostFiller.json
@@ -555,7 +575,11 @@ mod tests {
         };
         let ommer_beneficiary_info = Account {
             nonce: 0,
-            balance: calc::ommer_reward(base_block_reward, block.number, block.ommers[0].number),
+            balance: U256::from(calc::ommer_reward(
+                base_block_reward,
+                block.number,
+                block.ommers[0].number,
+            )),
             bytecode_hash: None,
         };
 
@@ -656,7 +680,9 @@ mod tests {
             "Ommer beneficiary state is wrong"
         );
     }
+    */
 
+    /* DAO HARDFORK change
     #[test]
     fn dao_hardfork_irregular_state_change() {
         let header = Header { number: 1, ..Header::default() };
@@ -714,7 +740,9 @@ mod tests {
             assert_eq!(updated_account, Account { balance: U256::ZERO, ..Default::default() });
         }
     }
+    */
 
+    /* TEST Selfdestruct
     #[test]
     fn test_selfdestruct() {
         // Modified version of eth test. Storage is added for selfdestructed account to see
@@ -790,7 +818,9 @@ mod tests {
             "Selfdestructed account should have its storage wiped"
         );
     }
+    */
 
+    /* ADD Withdrawal test
     // Test vector from https://github.com/ethereum/tests/blob/3156db5389921125bb9e04142d18e0e7b0cf8d64/BlockchainTests/EIPTests/bc4895-withdrawals/twoIdenticalIndexDifferentValidator.json
     #[test]
     fn test_withdrawals() {
@@ -835,232 +865,5 @@ mod tests {
             }),
             "Withdrawal account should have gotten its balance set"
         );
-    }
-
-    #[test]
-    fn test_account_state_preserved() {
-        let account = Address::from_str("c94f5374fce5edbc8e2a8697c15331677e6ebf0b").unwrap();
-
-        let mut db = StateProviderTest::default();
-        db.insert_account(account, Account::default(), None, HashMap::default());
-
-        let chain_spec = Arc::new(ChainSpecBuilder::mainnet().istanbul_activated().build());
-        let db = SubState::new(State::new(db));
-
-        let mut executor = Executor::new(chain_spec, db);
-        // touch account
-        executor.commit_changes(
-            1,
-            hash_map::HashMap::from([(account, DEFAULT_REVM_ACCOUNT.clone())]),
-            true,
-            &mut PostState::default(),
-        );
-        // destroy account
-        executor.commit_changes(
-            1,
-            hash_map::HashMap::from([(
-                account,
-                RevmAccount {
-                    is_destroyed: true,
-                    is_touched: true,
-                    ..DEFAULT_REVM_ACCOUNT.clone()
-                },
-            )]),
-            true,
-            &mut PostState::default(),
-        );
-        // re-create account
-        executor.commit_changes(
-            1,
-            hash_map::HashMap::from([(
-                account,
-                RevmAccount {
-                    is_touched: true,
-                    storage_cleared: true,
-                    ..DEFAULT_REVM_ACCOUNT.clone()
-                },
-            )]),
-            true,
-            &mut PostState::default(),
-        );
-        // touch account
-        executor.commit_changes(
-            1,
-            hash_map::HashMap::from([(account, DEFAULT_REVM_ACCOUNT.clone())]),
-            true,
-            &mut PostState::default(),
-        );
-
-        let db = executor.db();
-
-        let account = db.load_account(account).unwrap();
-        assert_eq!(account.account_state, AccountState::StorageCleared);
-    }
-
-    /// If the account is created and destroyed within the same transaction, we shouldn't generate
-    /// the changeset.
-    #[test]
-    fn test_account_created_destroyed() {
-        let address = Address::random();
-
-        let mut db = SubState::new(State::new(StateProviderTest::default()));
-        db.load_account(address).unwrap(); // hot load the non-existing account
-
-        let chain_spec = Arc::new(ChainSpecBuilder::mainnet().shanghai_activated().build());
-        let mut executor = Executor::new(chain_spec, db);
-        let mut post_state = PostState::default();
-
-        executor.commit_changes(
-            1,
-            hash_map::HashMap::from([(
-                address,
-                RevmAccount {
-                    is_destroyed: true,
-                    storage_cleared: true,
-                    ..DEFAULT_REVM_ACCOUNT.clone()
-                },
-            )]),
-            true,
-            &mut post_state,
-        );
-
-        assert!(post_state.account_changes().is_empty());
-    }
-
-    /// If the account was touched, but remained unchanged over the course of multiple transactions,
-    /// no changeset should be generated.
-    #[test]
-    fn test_touched_unchanged_account() {
-        let address = Address::random();
-
-        let db = SubState::new(State::new(StateProviderTest::default()));
-
-        let chain_spec = Arc::new(ChainSpecBuilder::mainnet().shanghai_activated().build());
-        let mut executor = Executor::new(chain_spec, db);
-        let mut post_state = PostState::default();
-
-        executor.commit_changes(
-            1,
-            hash_map::HashMap::from([(
-                address,
-                RevmAccount { is_touched: true, ..DEFAULT_REVM_ACCOUNT.clone() },
-            )]),
-            true,
-            &mut post_state,
-        );
-        assert!(post_state.account_changes().is_empty());
-
-        executor.commit_changes(
-            1,
-            hash_map::HashMap::from([(
-                address,
-                RevmAccount { is_touched: true, ..DEFAULT_REVM_ACCOUNT.clone() },
-            )]),
-            true,
-            &mut post_state,
-        );
-        assert_eq!(post_state.account_changes(), &AccountChanges::default());
-    }
-
-    #[test]
-    fn test_state_clear_eip_touch_account() {
-        let address = Address::random();
-
-        let mut state_provider = StateProviderTest::default();
-        state_provider.insert_account(address, Account::default(), None, HashMap::default());
-        let mut db = SubState::new(State::new(state_provider));
-        db.load_account(address).unwrap(); // hot load the account
-
-        let chain_spec = Arc::new(ChainSpecBuilder::mainnet().shanghai_activated().build());
-        let mut executor = Executor::new(chain_spec, db);
-        let mut post_state = PostState::default();
-
-        // Touch an empty account before state clearing EIP. Nothing should happen.
-        executor.commit_changes(
-            1,
-            hash_map::HashMap::from([(
-                address,
-                RevmAccount { is_touched: true, ..DEFAULT_REVM_ACCOUNT.clone() },
-            )]),
-            false,
-            &mut post_state,
-        );
-        assert_eq!(post_state.accounts(), &BTreeMap::default());
-        assert_eq!(post_state.account_changes(), &AccountChanges::default());
-
-        // Touch an empty account after state clearing EIP. The account should be destroyed.
-        executor.commit_changes(
-            2,
-            hash_map::HashMap::from([(
-                address,
-                RevmAccount { is_touched: true, ..DEFAULT_REVM_ACCOUNT.clone() },
-            )]),
-            true,
-            &mut post_state,
-        );
-        assert_eq!(post_state.accounts(), &BTreeMap::from([(address, None)]));
-        assert_eq!(
-            post_state.account_changes(),
-            &AccountChanges {
-                size: 1,
-                inner: BTreeMap::from([(2, BTreeMap::from([(address, Some(Account::default()))]))])
-            }
-        );
-    }
-
-    #[test]
-    fn test_state_clear_eip_create_account() {
-        let address1 = Address::random();
-        let address2 = Address::random();
-        let address3 = Address::random();
-        let address4 = Address::random();
-
-        let state_provider = StateProviderTest::default();
-        let mut db = SubState::new(State::new(state_provider));
-        db.load_account(address1).unwrap(); // hot load account 1
-
-        let chain_spec = Arc::new(ChainSpecBuilder::mainnet().shanghai_activated().build());
-        let mut executor = Executor::new(chain_spec, db);
-
-        // Create empty accounts before state clearing EIP.
-        let mut post_state_before_state_clear = PostState::default();
-        executor.commit_changes(
-            1,
-            hash_map::HashMap::from([
-                (address1, RevmAccount { is_touched: true, ..DEFAULT_REVM_ACCOUNT.clone() }),
-                (address2, RevmAccount { is_touched: true, ..DEFAULT_REVM_ACCOUNT.clone() }),
-            ]),
-            false,
-            &mut post_state_before_state_clear,
-        );
-        assert_eq!(
-            post_state_before_state_clear.accounts(),
-            &BTreeMap::from([
-                (address1, Some(Account::default())),
-                (address2, Some(Account::default()))
-            ])
-        );
-        assert_eq!(
-            post_state_before_state_clear.account_changes(),
-            &AccountChanges {
-                size: 2,
-                inner: BTreeMap::from([(1, BTreeMap::from([(address1, None), (address2, None)]))])
-            }
-        );
-
-        // Empty accounts should not be created after state clearing EIP.
-        let mut post_state_after_state_clear = PostState::default();
-        executor.commit_changes(
-            2,
-            hash_map::HashMap::from([
-                (address3, RevmAccount { is_touched: true, ..DEFAULT_REVM_ACCOUNT.clone() }),
-                (address4, RevmAccount { is_touched: true, ..DEFAULT_REVM_ACCOUNT.clone() }),
-            ]),
-            true,
-            &mut post_state_after_state_clear,
-        );
-        assert_eq!(post_state_after_state_clear.accounts(), &BTreeMap::default());
-        assert_eq!(post_state_after_state_clear.account_changes(), &AccountChanges::default());
-    }
+    }*/
 }
- */

@@ -143,7 +143,7 @@ impl BundleState {
             }
             hashed_state.insert_hashed_storage(hashed_address, hashed_storage)
         }
-        hashed_state
+        hashed_state.sorted()
     }
 
     /// Calculate the state root for this [PostState].
@@ -193,11 +193,11 @@ impl BundleState {
 
     /// Transform block number to the index of block.
     fn block_number_to_index(&self, block_number: BlockNumber) -> Option<usize> {
-        if block_number > self.first_block {
+        if self.first_block > block_number {
             return None
         }
         let index = block_number - self.first_block;
-        if index > self.receipts.len() as u64 {
+        if index >= self.receipts.len() as u64 {
             return None
         }
         Some(index as usize)
@@ -254,8 +254,9 @@ impl BundleState {
     pub fn revert_to(&mut self, block_number: BlockNumber) {
         let Some(index) = self.block_number_to_index(block_number) else { return };
 
-        let rm_trx = self.receipts.len() - index;
-        let new_len = self.len() - index;
+        // +1 is for number of blocks that we have as index is included.
+        let new_len = self.len() - (index + 1);
+        let rm_trx: usize = self.len() - new_len;
 
         // remove receipts
         self.receipts.truncate(new_len);
@@ -281,20 +282,25 @@ impl BundleState {
             return Some(Self::default())
         }
 
-        let num_of_detached_block = block_number - first_block;
-        // split is done as [0, num) and [num, len]. That is why
-        // we increment it by one.
-        let (detach, this) = self.receipts.split_at((num_of_detached_block + 1) as usize);
-        let detached_receipts = detach.to_vec();
+        // detached number should be included so we are adding +1 to it.
+        // for example if block number is same as first_block then
+        // number of detached block shoud be 1.
+        let num_of_detached_block = (block_number - first_block) + 1;
+
+        let mut detached_bundle_state: BundleState = self.clone();
+        detached_bundle_state.revert_to(block_number);
+
+        // split is done as [0, num) and [num, len]
+        let (_, this) = self.receipts.split_at(num_of_detached_block as usize);
+
         self.receipts = this.to_vec().clone();
-        let detached_bundle_state = self
-            .bundle
+        self.bundle
             .detach_lower_part_reverts(num_of_detached_block as usize)
             .expect("there should be detachments");
 
         self.first_block = block_number + 1;
 
-        Some(Self { bundle: detached_bundle_state, receipts: detached_receipts, first_block })
+        Some(detached_bundle_state)
     }
 
     /// Extend one state from another

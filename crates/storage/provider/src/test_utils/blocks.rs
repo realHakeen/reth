@@ -4,10 +4,10 @@ use crate::{BundleState, DatabaseProviderRW};
 use reth_db::{database::Database, models::StoredBlockBodyIndices, tables};
 use reth_primitives::{
     hex_literal::hex, Account, BlockNumber, Bytes, Header, Log, Receipt, SealedBlock,
-    SealedBlockWithSenders, TxType, Withdrawal, H160, H256, U256,
+    SealedBlockWithSenders, StorageEntry, TxType, Withdrawal, H160, H256, U256,
 };
 use reth_rlp::Decodable;
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 /// Assert genesis block
 pub fn assert_genesis_block<DB: Database>(provider: &DatabaseProviderRW<'_, DB>, g: SealedBlock) {
@@ -96,28 +96,39 @@ fn block1(number: BlockNumber) -> (SealedBlockWithSenders, BundleState) {
     header.parent_hash = H256::zero();
     block.header = header.seal_slow();
 
-    let mut post_state = BundleState::default();
-    // Transaction changes
-    /* TODO(rakita)
-    post_state.create_account(
-        number,
-        H160([0x61; 20]),
-        Account { nonce: 1, balance: U256::from(10), bytecode_hash: None },
-    );
-    post_state.create_account(
-        number,
-        H160([0x60; 20]),
-        Account { nonce: 1, balance: U256::from(10), bytecode_hash: None },
-    );
-    post_state.change_storage(
-        number,
-        H160([0x60; 20]),
-        BTreeMap::from([(U256::from(5), (U256::ZERO, U256::from(10)))]),
-    );
+    // block changes
+    let account1: H160 = [0x60; 20].into();
+    let account2: H160 = [0x61; 20].into();
+    let slot: H256 = H256::from_low_u64_be(5);
 
-    post_state.add_receipt(
-        number,
-        Receipt {
+    let bundle = BundleState::new_init(
+        HashMap::from([
+            (
+                account1,
+                (
+                    None,
+                    Some(Account { nonce: 1, balance: U256::from(10), bytecode_hash: None }),
+                    HashMap::from([(slot, (U256::from(0), U256::from(10)))]),
+                ),
+            ),
+            (
+                account2,
+                (
+                    None,
+                    Some(Account { nonce: 1, balance: U256::from(10), bytecode_hash: None }),
+                    HashMap::from([]),
+                ),
+            ),
+        ]),
+        HashMap::from([(
+            number,
+            HashMap::from([
+                (account1, (Some(None), vec![StorageEntry::new(slot, U256::from(0))])),
+                (account2, (Some(None), vec![])),
+            ]),
+        )]),
+        vec![],
+        vec![vec![Receipt {
             tx_type: TxType::EIP2930,
             success: true,
             cumulative_gas_used: 300,
@@ -126,11 +137,11 @@ fn block1(number: BlockNumber) -> (SealedBlockWithSenders, BundleState) {
                 topics: vec![H256::from_low_u64_be(1), H256::from_low_u64_be(2)],
                 data: Bytes::default(),
             }],
-        },
+        }]],
+        number,
     );
-    */
 
-    (SealedBlockWithSenders { block, senders: vec![H160([0x30; 20])] }, post_state)
+    (SealedBlockWithSenders { block, senders: vec![H160([0x30; 20])] }, bundle)
 }
 
 /// Block two that points to block 1
@@ -146,23 +157,31 @@ fn block2(number: BlockNumber, parent_hash: H256) -> (SealedBlockWithSenders, Bu
     header.parent_hash = parent_hash;
     block.header = header.seal_slow();
 
-    let mut post_state = BundleState::default();
-    /* TODO(rakita) revm state
     // block changes
-    post_state.change_account(
-        number,
-        H160([0x60; 20]),
-        Account { nonce: 1, balance: U256::from(10), bytecode_hash: None },
-        Account { nonce: 3, balance: U256::from(20), bytecode_hash: None },
-    );
-    post_state.change_storage(
-        number,
-        H160([0x60; 20]),
-        BTreeMap::from([(U256::from(5), (U256::from(10), U256::from(15)))]),
-    );
-    post_state.add_receipt(
-        number,
-        Receipt {
+    let account: H160 = [0x60; 20].into();
+    let slot: H256 = H256::from_low_u64_be(5);
+
+    let bundle = BundleState::new_init(
+        HashMap::from([(
+            account,
+            (
+                None,
+                Some(Account { nonce: 3, balance: U256::from(20), bytecode_hash: None }),
+                HashMap::from([(slot, (U256::from(0), U256::from(15)))]),
+            ),
+        )]),
+        HashMap::from([(
+            number,
+            HashMap::from([(
+                account,
+                (
+                    Some(Some(Account { nonce: 1, balance: U256::from(10), bytecode_hash: None })),
+                    vec![StorageEntry::new(slot, U256::from(10))],
+                ),
+            )]),
+        )]),
+        vec![],
+        vec![vec![Receipt {
             tx_type: TxType::EIP1559,
             success: false,
             cumulative_gas_used: 400,
@@ -171,8 +190,8 @@ fn block2(number: BlockNumber, parent_hash: H256) -> (SealedBlockWithSenders, Bu
                 topics: vec![H256::from_low_u64_be(3), H256::from_low_u64_be(4)],
                 data: Bytes::default(),
             }],
-        },
+        }]],
+        number,
     );
-     */
-    (SealedBlockWithSenders { block, senders: vec![H160([0x31; 20])] }, post_state)
+    (SealedBlockWithSenders { block, senders: vec![H160([0x31; 20])] }, bundle)
 }
