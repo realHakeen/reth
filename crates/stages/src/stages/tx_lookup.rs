@@ -1,23 +1,20 @@
 use crate::{ExecInput, ExecOutput, Stage, StageError, UnwindInput, UnwindOutput};
-use itertools::Itertools;
 use rayon::prelude::*;
 use reth_db::{
     cursor::{DbCursorRO, DbCursorRW},
     database::Database,
     tables,
     transaction::{DbTx, DbTxMut},
-    DatabaseError,
 };
 use reth_interfaces::provider::ProviderError;
 use reth_primitives::{
-    keccak256,
     stage::{EntitiesCheckpoint, StageCheckpoint, StageId},
-    PruneCheckpoint, PruneModes, PrunePart, TransactionSignedNoHash, TxNumber, H256,
+    PruneCheckpoint, PruneMode, PruneSegment,
 };
 use reth_provider::{
     BlockReader, DatabaseProviderRW, PruneCheckpointReader, PruneCheckpointWriter,
+    TransactionsProviderExt,
 };
-use tokio::sync::mpsc;
 use tracing::*;
 
 /// The transaction lookup stage.
@@ -29,19 +26,19 @@ use tracing::*;
 pub struct TransactionLookupStage {
     /// The number of lookup entries to commit at once
     commit_threshold: u64,
-    prune_modes: PruneModes,
+    prune_mode: Option<PruneMode>,
 }
 
 impl Default for TransactionLookupStage {
     fn default() -> Self {
-        Self { commit_threshold: 5_000_000, prune_modes: PruneModes::none() }
+        Self { commit_threshold: 5_000_000, prune_mode: None }
     }
 }
 
 impl TransactionLookupStage {
     /// Create new instance of [TransactionLookupStage].
-    pub fn new(commit_threshold: u64, prune_modes: PruneModes) -> Self {
-        Self { commit_threshold, prune_modes }
+    pub fn new(commit_threshold: u64, prune_mode: Option<PruneMode>) -> Self {
+        Self { commit_threshold, prune_mode }
     }
 }
 
@@ -58,22 +55,25 @@ impl<DB: Database> Stage<DB> for TransactionLookupStage {
         provider: &DatabaseProviderRW<'_, &DB>,
         mut input: ExecInput,
     ) -> Result<ExecOutput, StageError> {
-        if let Some((target_prunable_block, prune_mode)) =
-            self.prune_modes.prune_target_block_transaction_lookup(input.target())?
+        if let Some((target_prunable_block, prune_mode)) = self
+            .prune_mode
+            .map(|mode| mode.prune_target_block(input.target(), PruneSegment::TransactionLookup))
+            .transpose()?
+            .flatten()
         {
             if target_prunable_block > input.checkpoint().block_number {
                 input.checkpoint = Some(StageCheckpoint::new(target_prunable_block));
 
                 // Save prune checkpoint only if we don't have one already.
                 // Otherwise, pruner may skip the unpruned range of blocks.
-                if provider.get_prune_checkpoint(PrunePart::TransactionLookup)?.is_none() {
+                if provider.get_prune_checkpoint(PruneSegment::TransactionLookup)?.is_none() {
                     let target_prunable_tx_number = provider
                         .block_body_indices(target_prunable_block)?
                         .ok_or(ProviderError::BlockBodyIndicesNotFound(target_prunable_block))?
                         .last_tx_num();
 
                     provider.save_prune_checkpoint(
-                        PrunePart::TransactionLookup,
+                        PruneSegment::TransactionLookup,
                         PruneCheckpoint {
                             block_number: Some(target_prunable_block),
                             tx_number: Some(target_prunable_tx_number),
@@ -90,50 +90,15 @@ impl<DB: Database> Stage<DB> for TransactionLookupStage {
         let (tx_range, block_range, is_final_range) =
             input.next_block_range_with_transaction_threshold(provider, self.commit_threshold)?;
         let end_block = *block_range.end();
-        let tx_range_size = tx_range.clone().count();
 
         debug!(target: "sync::stages::transaction_lookup", ?tx_range, "Updating transaction lookup");
 
-        let tx = provider.tx_ref();
-        let mut tx_cursor = tx.cursor_read::<tables::Transactions>()?;
-        let tx_walker = tx_cursor.walk_range(tx_range)?;
-
-        let chunk_size = (tx_range_size / rayon::current_num_threads()).max(1);
-        let mut channels = Vec::with_capacity(chunk_size);
-        let mut transaction_count = 0;
-
-        for chunk in &tx_walker.chunks(chunk_size) {
-            let (tx, rx) = mpsc::unbounded_channel();
-            channels.push(rx);
-
-            // Note: Unfortunate side-effect of how chunk is designed in itertools (it is not Send)
-            let chunk: Vec<_> = chunk.collect();
-            transaction_count += chunk.len();
-
-            // Spawn the task onto the global rayon pool
-            // This task will send the results through the channel after it has calculated the hash.
-            rayon::spawn(move || {
-                let mut rlp_buf = Vec::with_capacity(128);
-                for entry in chunk {
-                    rlp_buf.clear();
-                    let _ = tx.send(calculate_hash(entry, &mut rlp_buf));
-                }
-            });
-        }
-
-        let mut tx_list = Vec::with_capacity(transaction_count);
-
-        // Iterate over channels and append the tx hashes to be sorted out later
-        for mut channel in channels {
-            while let Some(tx) = channel.recv().await {
-                let (tx_hash, tx_id) = tx.map_err(|boxed| *boxed)?;
-                tx_list.push((tx_hash, tx_id));
-            }
-        }
+        let mut tx_list = provider.transaction_hashes_by_range(tx_range)?;
 
         // Sort before inserting the reverse lookup for hash -> tx_id.
         tx_list.par_sort_unstable_by(|txa, txb| txa.0.cmp(&txb.0));
 
+        let tx = provider.tx_ref();
         let mut txhash_cursor = tx.cursor_write::<tables::TxHashNumber>()?;
 
         // If the last inserted element in the database is equal or bigger than the first
@@ -147,7 +112,6 @@ impl<DB: Database> Stage<DB> for TransactionLookupStage {
             .unwrap_or_default();
         // if txhash_cursor.last() is None we will do insert. `zip` would return none if any item is
         // none. if it is some and if first is smaller than last, we will do append.
-
         for (tx_hash, id) in tx_list {
             if insert {
                 txhash_cursor.insert(tx_hash, id)?;
@@ -200,22 +164,11 @@ impl<DB: Database> Stage<DB> for TransactionLookupStage {
     }
 }
 
-/// Calculates the hash of the given transaction
-#[inline]
-fn calculate_hash(
-    entry: Result<(TxNumber, TransactionSignedNoHash), DatabaseError>,
-    rlp_buf: &mut Vec<u8>,
-) -> Result<(H256, TxNumber), Box<StageError>> {
-    let (tx_id, tx) = entry.map_err(|e| Box::new(e.into()))?;
-    tx.transaction.encode_with_signature(&tx.signature, rlp_buf, false);
-    Ok((keccak256(rlp_buf), tx_id))
-}
-
 fn stage_checkpoint<DB: Database>(
     provider: &DatabaseProviderRW<'_, &DB>,
 ) -> Result<EntitiesCheckpoint, StageError> {
     let pruned_entries = provider
-        .get_prune_checkpoint(PrunePart::TransactionLookup)?
+        .get_prune_checkpoint(PruneSegment::TransactionLookup)?
         .and_then(|checkpoint| checkpoint.tx_number)
         // `+1` is needed because `TxNumber` is 0-indexed
         .map(|tx_number| tx_number + 1)
@@ -242,7 +195,7 @@ mod tests {
         generators::{random_block, random_block_range},
     };
     use reth_primitives::{
-        stage::StageUnitCheckpoint, BlockNumber, PruneCheckpoint, PruneMode, SealedBlock, H256,
+        stage::StageUnitCheckpoint, BlockNumber, PruneCheckpoint, PruneMode, SealedBlock, B256,
         MAINNET,
     };
     use reth_provider::{
@@ -316,7 +269,7 @@ mod tests {
 
         // Seed only once with full input range
         let seed =
-            random_block_range(&mut rng, stage_progress + 1..=previous_stage, H256::zero(), 0..4); // set tx count range high enough to hit the threshold
+            random_block_range(&mut rng, stage_progress + 1..=previous_stage, B256::ZERO, 0..4); // set tx count range high enough to hit the threshold
         runner.tx.insert_blocks(seed.iter(), None).expect("failed to seed execution");
 
         let total_txs = runner.tx.table::<tables::Transactions>().unwrap().len() as u64;
@@ -381,13 +334,10 @@ mod tests {
 
         // Seed only once with full input range
         let seed =
-            random_block_range(&mut rng, stage_progress + 1..=previous_stage, H256::zero(), 0..2);
+            random_block_range(&mut rng, stage_progress + 1..=previous_stage, B256::ZERO, 0..2);
         runner.tx.insert_blocks(seed.iter(), None).expect("failed to seed execution");
 
-        runner.set_prune_modes(PruneModes {
-            transaction_lookup: Some(PruneMode::Before(prune_target)),
-            ..Default::default()
-        });
+        runner.set_prune_mode(PruneMode::Before(prune_target));
 
         let rx = runner.execute(input);
 
@@ -415,7 +365,7 @@ mod tests {
         let tx = TestTransaction::default();
         let mut rng = generators::rng();
 
-        let blocks = random_block_range(&mut rng, 0..=100, H256::zero(), 0..10);
+        let blocks = random_block_range(&mut rng, 0..=100, B256::ZERO, 0..10);
         tx.insert_blocks(blocks.iter(), None).expect("insert blocks");
 
         let max_pruned_block = 30;
@@ -436,7 +386,7 @@ mod tests {
         let provider = tx.inner_rw();
         provider
             .save_prune_checkpoint(
-                PrunePart::TransactionLookup,
+                PruneSegment::TransactionLookup,
                 PruneCheckpoint {
                     block_number: Some(max_pruned_block),
                     tx_number: Some(
@@ -471,16 +421,12 @@ mod tests {
     struct TransactionLookupTestRunner {
         tx: TestTransaction,
         commit_threshold: u64,
-        prune_modes: PruneModes,
+        prune_mode: Option<PruneMode>,
     }
 
     impl Default for TransactionLookupTestRunner {
         fn default() -> Self {
-            Self {
-                tx: TestTransaction::default(),
-                commit_threshold: 1000,
-                prune_modes: PruneModes::none(),
-            }
+            Self { tx: TestTransaction::default(), commit_threshold: 1000, prune_mode: None }
         }
     }
 
@@ -489,8 +435,8 @@ mod tests {
             self.commit_threshold = threshold;
         }
 
-        fn set_prune_modes(&mut self, prune_modes: PruneModes) {
-            self.prune_modes = prune_modes;
+        fn set_prune_mode(&mut self, prune_mode: PruneMode) {
+            self.prune_mode = Some(prune_mode);
         }
 
         /// # Panics
@@ -530,7 +476,7 @@ mod tests {
         fn stage(&self) -> Self::S {
             TransactionLookupStage {
                 commit_threshold: self.commit_threshold,
-                prune_modes: self.prune_modes.clone(),
+                prune_mode: self.prune_mode,
             }
         }
     }
@@ -543,7 +489,7 @@ mod tests {
             let end = input.target();
             let mut rng = generators::rng();
 
-            let blocks = random_block_range(&mut rng, stage_progress + 1..=end, H256::zero(), 0..2);
+            let blocks = random_block_range(&mut rng, stage_progress + 1..=end, B256::ZERO, 0..2);
             self.tx.insert_blocks(blocks.iter(), None)?;
             Ok(blocks)
         }
@@ -558,9 +504,13 @@ mod tests {
                     let provider = self.tx.inner();
 
                     if let Some((target_prunable_block, _)) = self
-                        .prune_modes
-                        .prune_target_block_transaction_lookup(input.target())
+                        .prune_mode
+                        .map(|mode| {
+                            mode.prune_target_block(input.target(), PruneSegment::TransactionLookup)
+                        })
+                        .transpose()
                         .expect("prune target block for transaction lookup")
+                        .flatten()
                     {
                         if target_prunable_block > input.checkpoint().block_number {
                             input.checkpoint = Some(StageCheckpoint::new(target_prunable_block));

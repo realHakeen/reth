@@ -2,7 +2,7 @@ use crate::{
     identifier::TransactionId, pool::pending::PendingTransaction, PoolTransaction,
     TransactionOrdering, ValidPoolTransaction,
 };
-use reth_primitives::H256 as TxHash;
+use reth_primitives::B256 as TxHash;
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
     sync::Arc,
@@ -28,6 +28,10 @@ impl<T: TransactionOrdering> crate::traits::BestTransactions for BestTransaction
 
     fn no_updates(&mut self) {
         self.best.no_updates()
+    }
+
+    fn skip_blobs(&mut self) {
+        self.set_skip_blobs(true)
     }
 
     fn set_skip_blobs(&mut self, skip_blobs: bool) {
@@ -70,7 +74,7 @@ pub(crate) struct BestTransactions<T: TransactionOrdering> {
     pub(crate) independent: BTreeSet<PendingTransaction<T>>,
     /// There might be the case where a yielded transactions is invalid, this will track it.
     pub(crate) invalid: HashSet<TxHash>,
-    /// Used to recieve any new pending transactions that have been added to the pool after this
+    /// Used to receive any new pending transactions that have been added to the pool after this
     /// iterator was snapshotted
     ///
     /// These new pending transactions are inserted into this iterator's pool before yielding the
@@ -139,6 +143,10 @@ impl<T: TransactionOrdering> crate::traits::BestTransactions for BestTransaction
 
     fn no_updates(&mut self) {
         self.new_transaction_receiver.take();
+    }
+
+    fn skip_blobs(&mut self) {
+        self.set_skip_blobs(true);
     }
 
     fn set_skip_blobs(&mut self, skip_blobs: bool) {
